@@ -1,12 +1,48 @@
+from collections.abc import Iterator
 import cv2
 import numpy as np
 from PIL import Image
 
+from enum import Enum
 from src.misc import mse
 
 from typing import List, Tuple
 
+Bbox = Tuple[int, int, int, int]
 Color = Tuple[int|float, int|float, int|float]
+
+class COLOR(Enum):
+    RED   : Color = (255, 0, 0)
+    GREEN : Color = (0, 255, 0)
+    BLUE  : Color = (0, 0, 255)
+    WHITE : Color = (255, 255, 255)
+    BLACK : Color = (0, 0, 0)
+
+    ALL = (RED, GREEN, BLUE, WHITE, BLACK)
+
+    def __iter__(self) -> Iterator[int]:
+        return self.value.__iter__()
+    
+    def __hash__(self) -> int:
+        return hash(self.value)
+    
+    @classmethod
+    def identify(cls, color : np.ndarray | Color) -> 'COLOR':
+        if isinstance(color, np.ndarray):
+            if color.dtype == float:
+                color = (color * 255).astype(int)
+        
+        color = tuple(color)
+        
+        match color:
+            case cls.RED.value:   return cls.RED
+            case cls.GREEN.value: return cls.GREEN
+            case cls.BLUE.value:  return cls.BLUE
+            case cls.WHITE.value: return cls.WHITE
+            case cls.BLACK.value: return cls.BLACK
+
+            case _:
+                raise ValueError(f'Color {color} was not identified')
 
 def frame_as_float(frame : np.ndarray) -> np.ndarray:
     if frame.dtype == float: return frame.astype(float)
@@ -58,8 +94,11 @@ def quantize_palette(
     palette : List[Color],
 ) -> np.ndarray:
     was_float = frame.dtype == float
+
+    # Unroll the palette into a flat list as this is what PIL expects
+    palette = [v for rgb in palette for v in rgb]
     
-    # Zero-pad the palette to 256 RGB colours, i.e. 768 values and apply to image
+    # Zero-pad the palette to 256 RGB colors, i.e. 768 values and apply to image
     palette += (768 - len(palette)) * [0]
 
     # Make tiny palette Image, one black pixel
@@ -99,11 +138,14 @@ def bbox_notes(
     noise_cutoff : float = (2e-1, 1),
     cutoff_value : Tuple[float, float] = (0, 1),
     min_box_area : int = 100,
-    relative_coord : float = True,
-) -> List[Tuple[int, int, int, int]]:
+    relative_coord : bool = True,
+    color_use_enum : bool = True,
+) -> List[Tuple[Bbox, Color]]:
     '''
         This function identifies the bounding boxes around
         each note in the image.
+
+        NOTE: This function assumes the frame to be color-quantized
 
         Returns:
         - bboxes: List of 4-tuples where each tuple is the bounding
@@ -111,13 +153,12 @@ def bbox_notes(
     '''
 
     # Use thresholding to reduce frame noise and void false detection
-    frame = frame_threshold(frame, cutoff=noise_cutoff, cut_to=cutoff_value)
+    frame_thr = frame_threshold(frame, cutoff=noise_cutoff, cut_to=cutoff_value)
 
-    frame = frame_as_int(frame)
+    frame_thr = frame_as_int(frame_thr)
 
     # Use OpenCV to find object contours
-    contours, _ = cv2.findContours(frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    # contours, _ = cv2.findContours(frame, cv2.RETR_FLOODFILL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(frame_thr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     # Filter contours by minimum spanning area
     filtered_contours = [contour for contour in contours if cv2.contourArea(contour) > min_box_area]
@@ -125,10 +166,18 @@ def bbox_notes(
     # Find the bounding boxes for the notes
     bboxes = [cv2.boundingRect(contour) for contour in filtered_contours]
 
+    # Find the dominant color of each bounding box
+    # NOTE: We assume the frame as color-quantized so we can just use the
+    #       color at the center of the bounding box which should be
+    #       representative of the whole note
+    boxcol = [frame[y + h // 2, x + w // 2] for x, y, w, h in bboxes]
+
+    if color_use_enum: boxcol = [COLOR.identify(col) for col in boxcol]
+
     # If relative coordinates are requested, we rescale them based on the
     # input dimension of the original frame
     if relative_coord:
-        H, W = frame.shape
+        H, W, _ = frame.shape
         bboxes = [(x / W, y / H, w / W, h / H) for x, y, w, h in bboxes]
         
-    return bboxes
+    return list(zip(bboxes, boxcol))

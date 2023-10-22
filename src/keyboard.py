@@ -2,8 +2,11 @@ import numpy as np
 from itertools import cycle
 
 from .misc import find_closest_idx
+from .image import Bbox, COLOR
 
-from typing import List, Tuple
+from collections import defaultdict
+
+from typing import List, Tuple, Dict
 
 white_notes = ['C', 'D', 'E', 'F', 'G', 'A', 'B']
 black_sharp = ['C#', 'D#', None, 'F#', 'G#', 'A#', None]
@@ -85,10 +88,11 @@ def get_keyboard_spacings(
     return white_sp, black_sp
 
 def find_notes(
-    bboxes : List[Tuple[int, int, int, int]],
+    bboxes : List[Tuple[Bbox, COLOR]],
     key_layout : Tuple[List[str], List[str]],
     key_spacings : Tuple[np.ndarray, np.ndarray],
-) -> List[str]:
+    color_hand_map : Dict[COLOR, str],
+) -> Dict[str, List[str]]:
     '''
         This functions maps detected notes bounding boxes
         in an image into note names given the image keyboard
@@ -98,13 +102,16 @@ def find_notes(
     w_notes, b_notes = key_layout
     w_space, b_space = key_spacings
 
-    notes = []
+    notes = defaultdict(list)
 
-    for (x, y, w, h) in bboxes:
+    for (x, y, w, h), col in bboxes:
         # Control whether it's a black or white note from the bbox height
         if is_black_note(h): note = b_notes[find_closest_idx(b_space, x)]
         else:                note = w_notes[find_closest_idx(w_space, x)]
 
-        notes.append(note)
+        # Use color-coding to identify which hand is playing this note
+        hand = color_hand_map[col.value]
+
+        notes[hand].append(note)
 
     return notes
