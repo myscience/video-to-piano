@@ -96,7 +96,7 @@ def get_partition(
         bars = defaultdict(list)
 
         for notes in staff:
-            # just_notes = {k : v for k, v in notes.items() if k != 'TIME'}
+            if len(notes) < 3: notes.update({'REST-' : notes['T_FRAME']})
             bars[int(notes['T_ELAPSED'] // units_per_bar)].append(notes)
 
         partition[hand] = bars
