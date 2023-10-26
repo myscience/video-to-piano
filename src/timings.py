@@ -59,8 +59,20 @@ def attach_times(
     
     # Convert frame counts to seconds using fps
     timed = {hand : [{name : dur / fps for name, dur in notes.items()} for notes in staff
-                     if notes['T_FRAME'] / fps > min_t_frame]
+                     if len(notes) > 2 or notes['T_FRAME'] / fps > min_t_frame]
                 for hand, staff in timed.items()}
+    
+    # Merge adjacent frames if T_FRAME too short
+    for hand in timed:
+        flags = []
+        for pred, succ in pairwise(range(len(timed[hand]))):
+            if timed[hand][pred]['T_FRAME'] < min_t_frame:
+                timed[hand][succ].update({k : v for k, v in timed[hand][pred].items() if 'T_' not in k})
+                timed[hand][succ]['T_FRAME']   += timed[hand][pred]['T_FRAME']
+                timed[hand][succ]['T_ELAPSED'] += timed[hand][pred]['T_FRAME']
+                flags.append(pred)
+        
+        timed[hand] = [v for idx, v in enumerate(timed[hand]) if idx not in flags]
 
     return timed
 

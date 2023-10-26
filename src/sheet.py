@@ -27,13 +27,18 @@ def get_score(
     if isinstance(key, str): key_signature = {0 : key}
     if isinstance(time, tuple): time_signature = {0 : time}
 
+    # ! FIXME: THIS MIGHT LEAD TO TROUBLE IN THE FUTURE
+    num_bars = min(len(bar) - 1 for bar in partition.values())
+
     staffs = []
     for name, bars in partition.items():
         staff_clef = clef[name]
         if isinstance(staff_clef, str): staff_clef = {0 : staff_clef}
 
         voices = []
-        for idx, bar in bars.items():
+        for idx in range(num_bars):
+            bar = bars[idx]
+
             try:
                 bar_duration = abjad.Duration(time_signature[idx])
             except KeyError:
