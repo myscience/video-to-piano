@@ -4,6 +4,8 @@ from functools import partial
 from collections import defaultdict
 from typing import List, Dict, Tuple
 
+from .misc import invert_dict
+
 # NOTE: Sharp is coded as <note_name>s
 # NOTE: Flat  is coded as <note_name>f
 
@@ -14,33 +16,38 @@ from typing import List, Dict, Tuple
 def get_score(
     partition : Dict[str, Dict[int, List[Dict[str, int]]]],
     minimum_unit : int = 16,
-    time_signature : Tuple[int, int] = (4, 4),
-    key_signature : str = 'c',
+    time : Tuple[int, int] | Dict[int, Tuple[int, int]] = (4, 4),
+    key : str | Dict[int, str] = 'c',
     key_mode : str = 'major',
-    clef : str | Dict[str, str] = 'treble',
+    clef : str | Dict[str, str] | Dict[str, Dict[int, str]] = 'treble',
     score_name : str = 'Example Score',
 ) -> abjad.Score:
     
-    bar_line = abjad.BarLine()
-
-    key_signature = abjad.KeySignature(
-        abjad.NamedPitchClass(key_signature), abjad.Mode(key_mode)
-    )
-
-    clef = abjad.Clef(name=clef)
-    time_signature = abjad.TimeSignature(time_signature)
-    bar_duration = abjad.Duration(time_signature)
+    if isinstance(clef, str): clef = {name : clef for name in partition}
+    if isinstance(key, str): key_signature = {0 : key}
+    if isinstance(time, tuple): time_signature = {0 : time}
 
     staffs = []
     for name, bars in partition.items():
+        staff_clef = clef[name]
+        if isinstance(staff_clef, str): staff_clef = {0 : staff_clef}
 
         voices = []
         for idx, bar in bars.items():
+            try:
+                bar_duration = abjad.Duration(time_signature[idx])
+            except KeyError:
+                bar_duration = abjad.Duration(time)
+
             # bar_voice = abjad.Voice([], name=f'{name}-bar:{idx}')
             bar_voices = defaultdict(partial(new_voice, name=f'{name}-bar:{idx}-component'))
 
             for notes in bar:
-                abj_notes = [parse_note(name, duration) for name, duration in notes.items() if 'T_' not in name]
+                # Invert the notes dictionary, indexing via the duration, this is most
+                # useful to identify whether we need a note, a chord or two voices
+                inv_notes = invert_dict(notes, exclude='T_')
+                # abj_notes = [parse_note(name, duration) for name, duration in notes.items() if 'T_' not in name]
+                abj_notes = [parse_notes(chord, duration) for duration, chord in inv_notes.items()]
 
                 # Add each note to a different voice if voice duration is below bar measure
                 curr_voice = 0
@@ -61,10 +68,22 @@ def get_score(
                 
             bar_voices = abjad.Voice(bar_voices.values(), name=f'{name}-bar:{idx}', simultaneous=True)
 
-            if idx == 0:
-                abjad.attach(clef, get_first_note(bar_voices))
-                abjad.attach(key_signature, get_first_note(bar_voices))
-                abjad.attach(time_signature, get_first_note(bar_voices))
+            # Attach the decorators
+            if idx in staff_clef:
+                abj_clef = abjad.Clef(name=staff_clef[idx])
+                abjad.attach(abj_clef, get_first_note(bar_voices))
+
+            if idx in key_signature:
+                abj_key = abjad.KeySignature(
+                    abjad.NamedPitchClass(key_signature[idx]), abjad.Mode(key_mode)
+                )
+   
+                abjad.attach(abj_key, get_first_note(bar_voices))
+
+            if idx in time_signature:
+                abj_time = abjad.TimeSignature(time_signature[idx])
+
+                abjad.attach(abj_time, get_first_note(bar_voices))
 
             voices.append(bar_voices)
 
@@ -84,24 +103,36 @@ def new_voice(
 ) -> abjad.Voice:
     return abjad.Voice([], name=name)
 
-def parse_note(
-    note : str,
+def parse_notes(
+    notes : str | List[str],
     duration : int,
     central_octave : int = 3,
     min_unit : int = 16,
-) -> abjad.Note:
+) -> abjad.Note | abjad.Chord:
     duration = abjad.Duration(duration, min_unit)
 
-    name, octave = note.split('-')
+    if isinstance(notes, str): notes = [notes]
 
-    if name == 'REST': return abjad.Rest(duration)
-                    
-    name = name.lower().replace('#', 's').replace('b', 'f')
-    pitch = "'" * (int(octave) - central_octave) + ',' * (central_octave - int(octave))
+    parsed = []
+    for note in notes:
+        name, octave = note.split('-')
 
-    note = abjad.Note(name + pitch, duration)
+        if name == 'REST': return abjad.Rest(duration)
+                        
+        name = name.lower().replace('#', 's').replace('b', 'f')
+        pitch = "'" * (int(octave) - central_octave) + ',' * (central_octave - int(octave))
 
-    return note
+        # note = abjad.Note(name + pitch, duration)
+        # parsed.append(note)
+        note = name + pitch# + duration
+        parsed.append(note)
+
+    if len(parsed) > 1:
+        out = abjad.Chord('<' + ' '.join(parsed) + '>')
+        out.written_duration = duration
+    else: out = abjad.Note(parsed[0], duration)
+
+    return out    
 
 def parse_rest(
     duration : int,
@@ -114,12 +145,9 @@ def parse_rest(
 def get_first_note(
     bar : abjad.Container
 ) -> abjad.Note:
-    return abjad.get.leaf(bar)
+    return abjad.get.leaf(bar, n=0)
 
-# ! FIXME: This routine is broken
 def get_last_note(
     bar : abjad.Container
 ) -> abjad.Note:
-    note = abjad.get.leaf(bar).notes[-1]
-
-    return note
+    return abjad.get.leaf(bar, n=-1)

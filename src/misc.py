@@ -1,4 +1,7 @@
 import numpy as np
+from typing import Dict, List
+
+from collections import defaultdict
 
 def mse(a : np.ndarray, b : np.ndarray, axis : int | None = None) -> float | np.ndarray:
     a = np.array(a)
@@ -20,3 +23,12 @@ def find_closest_idx(
     idx -= target - l < r - target
 
     return idx
+
+def invert_dict(orig : Dict, exclude : List[str] = []) -> Dict:
+    inv = defaultdict(list)
+
+    for k, v in orig.items():
+        if exclude in k: continue
+        inv[v].append(k)
+
+    return inv

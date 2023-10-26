@@ -49,8 +49,6 @@ def attach_times(
                     
         timed[hand] = dur_staff
     
-    print(timed['right-hand'])
-
     # The ELAPSED key should provide the cumulative time, so just add them all
     for hand, staff in timed.items():
 
