@@ -103,11 +103,20 @@ def get_partition(
     units_per_bar *= minimum_unit / time_unit
 
     for hand, staff in partition.items():
-        bars = defaultdict(list)
+        bar_notes = defaultdict(list)
 
         for notes in staff:
             if len(notes) < 3: notes.update({'REST-' : notes['T_FRAME']})
-            bars[int(notes['T_ELAPSED'] // units_per_bar)].append(notes)
+            bar_notes[int(notes['T_ELAPSED'] // units_per_bar)].append(notes)
+
+        bars = {}
+        for idx, notes in bar_notes.items():
+            bar_duration = sum([note['T_FRAME'] for note in notes])
+            bars[idx] = {
+                'notes' : notes,
+                'duration' : bar_duration,
+                'correct' : bar_duration == units_per_bar
+            }
 
         partition[hand] = bars
 

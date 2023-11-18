@@ -1,10 +1,15 @@
 import abjad
 
+from abjad import attach
+from abjad import StartSlur, StopSlur
+
 from functools import partial
 from collections import defaultdict
 from typing import List, Dict, Tuple
 
 from .misc import invert_dict
+
+MAX_NUMBER_OF_VOICES = 15
 
 # NOTE: Sharp is coded as <note_name>s
 # NOTE: Flat  is coded as <note_name>f
@@ -68,7 +73,7 @@ def get_score(
                     else:
                         curr_voice += 1
 
-                    if curr_voice > 15:
+                    if curr_voice > MAX_NUMBER_OF_VOICES:
                         raise ValueError('Runaway number of voices')
                 
             bar_voices = abjad.Voice(bar_voices.values(), name=f'{name}-bar:{idx}', simultaneous=True)
@@ -76,19 +81,19 @@ def get_score(
             # Attach the decorators
             if idx in staff_clef:
                 abj_clef = abjad.Clef(name=staff_clef[idx])
-                abjad.attach(abj_clef, get_first_note(bar_voices))
+                attach(abj_clef, get_first_note(bar_voices))
 
             if idx in key_signature:
                 abj_key = abjad.KeySignature(
                     abjad.NamedPitchClass(key_signature[idx]), abjad.Mode(key_mode)
                 )
    
-                abjad.attach(abj_key, get_first_note(bar_voices))
+                attach(abj_key, get_first_note(bar_voices))
 
             if idx in time_signature:
                 abj_time = abjad.TimeSignature(time_signature[idx])
 
-                abjad.attach(abj_time, get_first_note(bar_voices))
+                attach(abj_time, get_first_note(bar_voices))
 
             voices.append(bar_voices)
 
@@ -124,7 +129,7 @@ def parse_notes(
 
         if name == 'REST': return abjad.Rest(duration)
                         
-        name = name.lower().replace('#', 's').replace('b', 'f')
+        name = name.replace('#', 's').replace('b', 'f').lower()
         pitch = "'" * (int(octave) - central_octave) + ',' * (central_octave - int(octave))
 
         # note = abjad.Note(name + pitch, duration)
