@@ -96,7 +96,7 @@ def get_partition(
                             for notes in staff]
                     for hand, staff in timed_music.items()
                 }
-    
+
     # Now that everything is expressed into unit of `minimum_unit` we
     # can attempt to subdivide the music into bars
     units_per_bar, time_unit = global_time
@@ -107,7 +107,35 @@ def get_partition(
 
         for notes in staff:
             if len(notes) < 3: notes.update({'REST-' : notes['T_FRAME']})
-            bar_notes[int(notes['T_ELAPSED'] // units_per_bar)].append(notes)
+            bar_notes[int(notes['T_ELAPSED'] // units_per_bar)].append(notes)            
+
+        # Check each bar boundary for incorrect partitioning, if found attempt
+        # note duration splitting
+        for prev, post in pairwise(range(len(bar_notes))):
+            prev_notes = bar_notes[prev]
+            post_notes = bar_notes[post]
+
+            prev_duration = get_bar_duration(prev_notes)
+            post_duration = get_bar_duration(post_notes)
+
+            # prev_correct = prev_duration == units_per_bar
+            # post_correct = post_duration == units_per_bar
+
+            # Check whether we should move the boundary to the left
+            # (i.e. post bar is too short and prev bar is too long)
+            # or the opposite.
+            prev_diff = int(units_per_bar - prev_duration)
+            post_diff = int(units_per_bar - post_duration)
+
+            if prev_duration < post_duration: prev_notes.append(remove_note_duration(post_notes[+0], post_diff))
+            # elif prev_duration > post_duration: post_notes.insert(0, remove_note_duration(prev_notes[-1], prev_diff))
+            # else: pass
+
+            # if prev_notes[-1]['T_FRAME'] < 1: del prev_notes[-1][-1]
+            # if post_notes[+0]['T_FRAME'] < 1: del post_notes[+0][+0]
+
+            bar_notes[prev] = prev_notes
+            bar_notes[post] = post_notes
 
         bars = {}
         for idx, notes in bar_notes.items():
@@ -131,3 +159,21 @@ def sec2unit(
     num_quart = dur_sec * quarter_bpm / 60
 
     return round(num_quart / base)
+
+def remove_note_duration(note : Dict[str, int], diff_dur : int) -> Dict[str, int]:
+    '''
+        This function takes a note and a difference in duration and
+        modifies the note in-place so to remove the provided duration.
+        It additionally returns a new note representing the modified
+        duration.
+    '''
+
+    new_note = {k : abs(diff_dur) for k, v in note.items()}
+    
+    # Here we modify the new note in-place
+    for k in note: note[k] += diff_dur
+
+    return new_note
+
+def get_bar_duration(notes : List[Dict[str, int]]) -> int:
+    return sum([note['T_FRAME'] for note in notes])

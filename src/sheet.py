@@ -52,7 +52,7 @@ def get_score(
             # bar_voice = abjad.Voice([], name=f'{name}-bar:{idx}')
             bar_voices = defaultdict(partial(new_voice, name=f'{name}-bar:{idx}-component'))
 
-            for notes in bar:
+            for notes in bar['notes']:
                 # Invert the notes dictionary, indexing via the duration, this is most
                 # useful to identify whether we need a note, a chord or two voices
                 inv_notes = invert_dict(notes, exclude='T_')
@@ -64,9 +64,10 @@ def get_score(
                 curr_note = abj_notes[0]
 
                 while len(abj_notes):
+                    note_duration = abjad.get.duration(curr_note)
                     voice_duration = abjad.get.duration(bar_voices[curr_voice])
                     
-                    if abjad.get.duration(curr_note) + voice_duration <= bar_duration:
+                    if note_duration + voice_duration <= bar_duration:
                         bar_voices[curr_voice].append(curr_note)
                         curr_note = abj_notes.pop()
                         curr_voice += 1
