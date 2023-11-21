@@ -118,8 +118,8 @@ def get_partition(
             prev_duration = get_bar_duration(prev_notes)
             post_duration = get_bar_duration(post_notes)
 
-            # prev_correct = prev_duration == units_per_bar
-            # post_correct = post_duration == units_per_bar
+            prev_correct = prev_duration == units_per_bar
+            post_correct = post_duration == units_per_bar
 
             # Check whether we should move the boundary to the left
             # (i.e. post bar is too short and prev bar is too long)
@@ -127,12 +127,14 @@ def get_partition(
             prev_diff = int(units_per_bar - prev_duration)
             post_diff = int(units_per_bar - post_duration)
 
-            if prev_duration < post_duration: prev_notes.append(remove_note_duration(post_notes[+0], post_diff))
-            # elif prev_duration > post_duration: post_notes.insert(0, remove_note_duration(prev_notes[-1], prev_diff))
-            # else: pass
+            move_bar_left  = not prev_correct and not post_correct and prev_duration < post_duration
+            move_bar_right = not prev_correct and not post_correct and prev_duration > post_duration
+            if   move_bar_left : prev_notes.append(   remove_note_duration(post_notes[+0], post_diff))
+            elif move_bar_right: post_notes.insert(0, remove_note_duration(prev_notes[-1], prev_diff))
+            else: pass
 
-            # if prev_notes[-1]['T_FRAME'] < 1: del prev_notes[-1][-1]
-            # if post_notes[+0]['T_FRAME'] < 1: del post_notes[+0][+0]
+            if prev_notes[-1]['T_FRAME'] < 1: del prev_notes[-1]
+            if post_notes[+0]['T_FRAME'] < 1: del post_notes[+0]
 
             bar_notes[prev] = prev_notes
             bar_notes[post] = post_notes

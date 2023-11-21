@@ -2,6 +2,7 @@ from collections.abc import Iterator
 import cv2
 import numpy as np
 from PIL import Image
+from PIL import ImageEnhance
 
 from enum import Enum
 from src.misc import mse
@@ -92,6 +93,7 @@ def frame_threshold(
 def quantize_palette(
     frame : np.ndarray,
     palette : List[Color],
+    color_enhance : float = 10.,
 ) -> np.ndarray:
     was_float = frame.dtype == float
 
@@ -106,6 +108,11 @@ def quantize_palette(
     img_palette.putpalette(palette)
     
     img = frame_to_pil(frame).convert('RGB')
+
+    # Enhance color saturation to avoid artifact of quantization
+    enhancer = ImageEnhance.Color(img)
+    img = enhancer.enhance(color_enhance)
+
     img = img.quantize(palette=img_palette,dither=Image.Dither.NONE).convert('RGB')
 
     return pil_to_frame(img, as_float=was_float)
@@ -138,6 +145,8 @@ def bbox_notes(
     noise_cutoff : float = (2e-1, 1),
     cutoff_value : Tuple[float, float] = (0, 1),
     min_box_area : int = 100,
+    min_width : int = 10,
+    min_height : int = 50,
     relative_coord : bool = True,
     color_use_enum : bool = True,
 ) -> List[Tuple[Bbox, Color]]:
@@ -168,9 +177,11 @@ def bbox_notes(
 
     # Find the dominant color of each bounding box
     # NOTE: We assume the frame as color-quantized so we can just use the
-    #       color at the center of the bounding box which should be
+    #       color at the lower part of the bounding box which should be
     #       representative of the whole note
-    boxcol = [frame[y + h // 2, x + w // 2] for x, y, w, h in bboxes]
+    # NOTE: The center is a poor choice for white keys as it can end up
+    #       being on a black key instead!
+    boxcol = [frame[y + h - h // 8, x + w // 2] for x, y, w, h in bboxes if w > min_width and h > min_height]
 
     if color_use_enum: boxcol = [COLOR.identify(col) for col in boxcol]
 

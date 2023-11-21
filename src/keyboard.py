@@ -47,31 +47,6 @@ def get_keyboard_layout(
             clean_fake=clean_fake_keys,
         )
 
-    # if separate_bw:
-    #     keyboard = (white_kb, black_kb)
-    # else:
-    #     keyboard = [(w, b) if black_key_notation == 'sharp' else (b, w) for w, b in zip(white_kb, black_kb)]
-    #     keyboard = [note for pair in keyboard for note in pair]
-
-    # if separate_bw:
-    #     if trim_black_borders:
-    #         black_kb = black_kb[:-1] if black_key_notation == 'sharp' else black_kb[1:]
-            
-    #     if clean_fake_black_keys:
-    #         black_kb = [note for note in black_kb if 'None' not in note]
-
-    #     keyboard = (white_kb, black_kb)
-
-    # else:
-    #     keyboard = [(w, b) if black_key_notation == 'sharp' else (b, w) for w, b in zip(white_kb, black_kb)]
-    #     keyboard = [note for pair in keyboard for note in pair]
-
-    #     if trim_black_borders:
-    #         keyboard = keyboard[:-1] if black_key_notation == 'sharp' else keyboard[1:]
-        
-    #     if clean_fake_black_keys:
-    #         keyboard = [note for note in keyboard if 'None' not in note]
-
     return white_kb, black_kb
 
 def get_keyboard_spacings(
