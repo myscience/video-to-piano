@@ -1,12 +1,19 @@
 import abjad
-
 from abjad import attach
+from copy import copy, deepcopy
+from abjad import Duration
+from abjad import Note, Chord, Rest
 from abjad import StartSlur, StopSlur
+from abjad import Voice, Staff, StaffGroup, Score
+
+from abjad.get import duration as get_duration
 
 from functools import partial
+from itertools import pairwise
 from collections import defaultdict
 from typing import List, Dict, Tuple
 
+from .misc import lazydefault
 from .misc import invert_dict
 
 MAX_NUMBER_OF_VOICES = 15
@@ -20,13 +27,13 @@ MAX_NUMBER_OF_VOICES = 15
 
 def get_score(
     partition : Dict[str, Dict[int, List[Dict[str, int]]]],
-    minimum_unit : int = 16,
-    time : Tuple[int, int] | Dict[int, Tuple[int, int]] = (4, 4),
     key : str | Dict[int, str] = 'c',
-    key_mode : str = 'major',
+    time : Tuple[int, int] | Dict[int, Tuple[int, int]] = (4, 4),
     clef : str | Dict[str, str] | Dict[str, Dict[int, str]] = 'treble',
+    key_mode : str = 'major',
     score_name : str = 'Example Score',
-) -> abjad.Score:
+    minimum_unit : int = 16,
+) -> Score:
     
     if isinstance(clef, str): clef = {name : clef for name in partition}
     if isinstance(key, str): key_signature = {0 : key}
@@ -45,17 +52,22 @@ def get_score(
             bar = bars[idx]
 
             try:
-                bar_duration = abjad.Duration(time_signature[idx])
+                bar_duration = Duration(time_signature[idx])
             except KeyError:
-                bar_duration = abjad.Duration(time)
+                bar_duration = Duration(time)
 
             # bar_voice = abjad.Voice([], name=f'{name}-bar:{idx}')
-            bar_voices = defaultdict(partial(new_voice, name=f'{name}-bar:{idx}-component'))
+            bar_voices : Dict[int, Voice] = defaultdict(partial(new_voice, name=f'{name}-bar:{idx}-component'))
 
             for notes in bar['notes']:
+                # * NOTE: Voices can be separated by checking whether the two consecutive notes have
+                # *       the same duration (i.e. this is a chord) or they are played at the same time
+                # *       but with different durations (i.e. they are two separate voices)
+
                 # Invert the notes dictionary, indexing via the duration, this is most
                 # useful to identify whether we need a note, a chord or two voices
                 inv_notes = invert_dict(notes, exclude='T_')
+
                 # abj_notes = [parse_note(name, duration) for name, duration in notes.items() if 'T_' not in name]
                 abj_notes = [parse_notes(chord, duration) for duration, chord in inv_notes.items()]
 
@@ -64,8 +76,8 @@ def get_score(
                 curr_note = abj_notes[0]
 
                 while len(abj_notes):
-                    note_duration = abjad.get.duration(curr_note)
-                    voice_duration = abjad.get.duration(bar_voices[curr_voice])
+                    note_duration = get_duration(curr_note)
+                    voice_duration = get_duration(bar_voices[curr_voice])
                     
                     if note_duration + voice_duration <= bar_duration:
                         bar_voices[curr_voice].append(curr_note)
@@ -76,8 +88,10 @@ def get_score(
 
                     if curr_voice > MAX_NUMBER_OF_VOICES:
                         raise ValueError('Runaway number of voices')
-                
-            bar_voices = abjad.Voice(bar_voices.values(), name=f'{name}-bar:{idx}', simultaneous=True)
+                    
+                clean_voices = add_slurs(bar_voices, minimum_unit=minimum_unit)
+                    
+            bar_voices = Voice(clean_voices, name=f'{name}-bar:{idx}', simultaneous=True)
 
             # Attach the decorators
             if idx in staff_clef:
@@ -98,29 +112,65 @@ def get_score(
 
             voices.append(bar_voices)
 
-        staff = abjad.Staff(voices, name=name)
+        staff = Staff(voices, name=name)
         
         # abjad.attach(bar_line, staff)
         staffs.append(staff)
 
-    staffs = abjad.StaffGroup(staffs[::-1], lilypond_type='PianoStaff', simultaneous=True)
+    staffs = StaffGroup(staffs[::-1], lilypond_type='PianoStaff', simultaneous=True)
         
-    score = abjad.Score([staffs], name=score_name)
+    score = Score([staffs], name=score_name)
 
     return score
 
 def new_voice(
     name : str = 'default'
-) -> abjad.Voice:
-    return abjad.Voice([], name=name)
+) -> Voice:
+    return Voice([], name=name)
+
+def add_slurs(
+    bar : Dict[int, Voice],
+    minimum_unit : int = 16,
+) -> List[Voice]:
+    # Scan notes to find slur start and stop
+    clean_voices = []
+    for voice in bar.values():
+        clean_voice = Voice([], name=f'{voice.name}-cleaned')
+
+        for i, note in enumerate(voice):
+            curr_note = copy(note)
+            prev_note = lazydefault(lambda : clean_voice[i - 1], err = None)
+            prev_duration = get_duration(prev_note) if prev_note else Duration(0, minimum_unit) 
+            curr_duration = get_duration(curr_note)
+
+            size, unit = curr_duration.numerator, curr_duration.denominator
+
+            if size > 1 and Duration(1, unit) == prev_duration:
+                # Separate the longer odd note into a sustained note and the rest
+                mute_note : Note | Chord = copy(curr_note)
+                next_note : Note | Chord = copy(curr_note)
+
+                mute_note.written_duration = Duration(       1, unit)
+                next_note.written_duration = Duration(size - 1, unit)
+
+                attach(StartSlur(), mute_note)
+                attach(StopSlur(),  next_note)
+
+                clean_voice.extend((mute_note, next_note))
+            else:
+                clean_voice.append(curr_note)
+
+        clean_voices.append(clean_voice)
+
+    return clean_voices
 
 def parse_notes(
     notes : str | List[str],
     duration : int,
     central_octave : int = 3,
     min_unit : int = 16,
-) -> abjad.Note | abjad.Chord:
-    duration = abjad.Duration(duration, min_unit)
+) -> Note | Chord:
+    duration = Duration(duration, min_unit)
 
     if isinstance(notes, str): notes = [notes]
 
@@ -128,7 +178,7 @@ def parse_notes(
     for note in notes:
         name, octave = note.split('-')
 
-        if name == 'REST': return abjad.Rest(duration)
+        if name == 'REST': return Rest(duration)
                         
         name = name.replace('#', 's').replace('b', 'f').lower()
         pitch = "'" * (int(octave) - central_octave) + ',' * (central_octave - int(octave))
@@ -139,19 +189,19 @@ def parse_notes(
         parsed.append(note)
 
     if len(parsed) > 1:
-        out = abjad.Chord('<' + ' '.join(parsed) + '>')
+        out = Chord('<' + ' '.join(parsed) + '>')
         out.written_duration = duration
-    else: out = abjad.Note(parsed[0], duration)
+    else: out = Note(parsed[0], duration)
 
     return out    
 
 def parse_rest(
     duration : int,
     min_unit : int = 16,
-) -> abjad.Rest():
-    duration = abjad.Duration(duration, min_unit)
+) -> Rest:
+    duration = Duration(duration, min_unit)
 
-    return abjad.Rest(duration)
+    return Rest(duration)
 
 def get_first_note(
     bar : abjad.Container

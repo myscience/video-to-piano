@@ -1,7 +1,15 @@
 import numpy as np
-from typing import Dict, List
+from typing import Dict, List, Callable, Any
 
 from collections import defaultdict
+
+def lazydefault(expr : Callable, err : Any = None) -> Any:
+    try:
+        out = expr()
+    except Exception:
+        out = err
+    
+    return out
 
 def mse(a : np.ndarray, b : np.ndarray, axis : int | None = None) -> float | np.ndarray:
     a = np.array(a)
