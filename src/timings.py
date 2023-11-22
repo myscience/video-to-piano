@@ -106,6 +106,9 @@ def get_partition(
         bar_notes = defaultdict(list)
 
         for notes in staff:
+            # If a note dic has less than two entries it means it only has
+            # T_FRAME and T_ELAPSE, meaning no note is played, so this must
+            # be a rest of length equal to T_FRAME, so just put it there!
             if len(notes) < 3: notes.update({'REST-' : notes['T_FRAME']})
             bar_notes[int(notes['T_ELAPSED'] // units_per_bar)].append(notes)            
 

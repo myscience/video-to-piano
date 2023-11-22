@@ -97,8 +97,8 @@ def find_notes(
 
     for (x, y, w, h), col in bboxes:
         # Control whether it's a black or white note from the bbox height
-        if is_black_note(h): note = b_notes[find_closest_idx(b_space, x)]
-        else:                note = w_notes[find_closest_idx(w_space, x)]
+        if is_black_note(h): note = b_notes[find_closest_idx(b_space, x + w / 2)]
+        else:                note = w_notes[find_closest_idx(w_space, x + w / 2)]
 
         # Use color-coding to identify which hand is playing this note
         hand = color_hand_map[col.value]
