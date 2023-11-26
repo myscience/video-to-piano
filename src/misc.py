@@ -3,6 +3,9 @@ from typing import Dict, List, Callable, Any
 
 from collections import defaultdict
 
+def default(var : Any, val : Any) -> Any:
+    return val if var is None else var
+
 def lazydefault(expr : Callable, err : Any = None) -> Any:
     try:
         out = expr()
