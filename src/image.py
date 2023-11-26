@@ -175,13 +175,16 @@ def bbox_notes(
     # Find the bounding boxes for the notes
     bboxes = [cv2.boundingRect(contour) for contour in filtered_contours]
 
+    # Filter bounding boxes based on minimum width and minimum height
+    bboxes = [(x, y, w, h) for x, y, w, h in bboxes if w > min_width and h > min_height]
+    
     # Find the dominant color of each bounding box
     # NOTE: We assume the frame as color-quantized so we can just use the
     #       color at the lower part of the bounding box which should be
     #       representative of the whole note
     # NOTE: The center is a poor choice for white keys as it can end up
     #       being on a black key instead!
-    boxcol = [frame[y + h - h // 8, x + w // 2] for x, y, w, h in bboxes if w > min_width and h > min_height]
+    boxcol = [frame[y + h - h // 8, x + w // 2] for x, y, w, h in bboxes]
 
     if color_use_enum: boxcol = [COLOR.identify(col) for col in boxcol]
 
