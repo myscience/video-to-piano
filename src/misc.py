@@ -1,4 +1,5 @@
 import numpy as np
+from abjad import Note
 from typing import Dict, List, Callable, Any
 
 from collections import defaultdict
@@ -43,3 +44,13 @@ def invert_dict(orig : Dict, exclude : List[str] = []) -> Dict:
         inv[v].append(k)
 
     return inv
+
+def get_note_name(note : Note, drop_duration : bool = True) -> str:
+    if drop_duration: return note.written_pitch.name
+
+    name_1 = str(note).split("'")
+    name_2 = str(note).split('"')
+
+    name = name_1[1] if len(name_1) > len(name_2) else name_2[1]
+
+    return name

@@ -15,6 +15,7 @@ from typing import List, Dict, Tuple
 
 from .misc import lazydefault
 from .misc import invert_dict
+from .misc import get_note_name
 
 MAX_NUMBER_OF_VOICES = 15
 
@@ -68,8 +69,13 @@ def get_score(
                 # useful to identify whether we need a note, a chord or two voices
                 inv_notes = invert_dict(notes, exclude='T_')
 
-                # abj_notes = [parse_note(name, duration) for name, duration in notes.items() if 'T_' not in name]
-                abj_notes = [parse_notes(chord, duration) for duration, chord in inv_notes.items()]
+                try:
+                    abj_notes = [parse_notes(chord, duration) for duration, chord in inv_notes.items()]
+                    abj_notes = [note for notes in abj_notes for note in notes]
+
+                except abjad.AssignabilityError as err:
+                    msg = f'Caught an Assignability Error: {err}.\nError occurred in bar #{idx} while parsing {inv_notes}'
+                    raise abjad.AssignabilityError(msg)
 
                 # Add each note to a different voice if voice duration is below bar measure
                 curr_voice = 0
@@ -165,35 +171,67 @@ def add_slurs(
     return clean_voices
 
 def parse_notes(
-    notes : str | List[str],
+    codes : str | List[str],
     duration : int,
     central_octave : int = 3,
     min_unit : int = 16,
-) -> Note | Chord:
+) -> List[Note | Chord]:
     duration = Duration(duration, min_unit)
 
-    if isinstance(notes, str): notes = [notes]
+    durations = [duration.equal_or_lesser_assignable]
+    while (duration := duration - duration.equal_or_lesser_assignable) > 0:
+        durations.append(duration)
+
+    if isinstance(codes, str): codes = [codes]
 
     parsed = []
-    for note in notes:
-        name, octave = note.split('-')
+    for duration in durations:
+        notes = [_rest_or_note(
+                note,
+                duration=duration,
+                central_octave=central_octave,
+                min_unit=min_unit,
+            ) for note in codes
+        ]
 
-        if name == 'REST': return Rest(duration)
-                        
+        out = _promote_to_chord(notes)
+
+        parsed.append(out)
+
+    return parsed
+
+def _rest_or_note(
+    code : str,
+    duration : int | Duration,
+    min_unit : int = 16,
+    central_octave : int = 3,
+) -> Rest | Note:
+    if isinstance(duration, int): duration = Duration(duration, min_unit)
+
+    name, octave = code.split('-')
+
+    if name == 'REST': note = Rest(duration)
+    else:
         name = name.replace('#', 's').replace('b', 'f').lower()
         pitch = "'" * (int(octave) - central_octave) + ',' * (central_octave - int(octave))
 
-        # note = abjad.Note(name + pitch, duration)
-        # parsed.append(note)
-        note = name + pitch# + duration
-        parsed.append(note)
+        note = Note(name + pitch, duration)
 
-    if len(parsed) > 1:
-        out = Chord('<' + ' '.join(parsed) + '>')
-        out.written_duration = duration
-    else: out = Note(parsed[0], duration)
+    return note
 
-    return out    
+def _promote_to_chord(
+    notes : List[Note],
+) -> Note | Chord:
+    duration = notes[0].written_duration
+    all_equal = all([note.written_duration == duration for note in notes])
+
+    if len(notes) == 1: return notes[0]
+    elif len(notes) > 1 and all_equal:
+        chord = Chord('<' + ' '.join([get_note_name(note) for note in notes]) + '>')
+        chord.written_duration = duration
+        return chord
+    else:
+        raise ValueError(f'Unknown promotion rule for notes: {notes}')
 
 def parse_rest(
     duration : int,
