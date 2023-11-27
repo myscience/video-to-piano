@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 from itertools import cycle
 
@@ -100,10 +101,12 @@ def find_notes(
         if is_black_note(h): note = b_notes[find_closest_idx(b_space, x + w / 2)]
         else:                note = w_notes[find_closest_idx(w_space, x + w / 2)]
 
-        # Use color-coding to identify which hand is playing this note
-        hand = color_hand_map[col.value]
-
-        notes[hand].append(note)
+        try:
+            # Use color-coding to identify which hand is playing this note
+            hand = color_hand_map[col.value]
+            notes[hand].append(note)
+        except KeyError as err:
+            warnings.warn(f'Unknown note color: {col.value}. Skipping this note.')
 
     return notes
 

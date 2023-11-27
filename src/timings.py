@@ -34,8 +34,6 @@ def attach_times(
                 for notes, duration in zip(staff, times)
         ]
 
-        # if hand == 'right-hand': print(dur_staff)
-
         for i, (succ, prev) in enumerate(pairwise(reversed(staff))):
             for note in succ:
                 if note in prev:
@@ -48,8 +46,6 @@ def attach_times(
                     
         timed[hand] = dur_staff
 
-    # print(timed['right-hand'])
-    
     # The ELAPSED key should provide the cumulative time, so just add them all
     for hand, staff in timed.items():
 

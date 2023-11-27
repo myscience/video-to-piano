@@ -5,6 +5,7 @@ from abjad import Duration
 from abjad import Note, Chord, Rest
 from abjad import StartSlur, StopSlur
 from abjad import Voice, Staff, StaffGroup, Score
+from abjad import MetronomeMark
 
 from abjad.get import duration as get_duration
 
@@ -17,7 +18,10 @@ from .misc import lazydefault
 from .misc import invert_dict
 from .misc import get_note_name
 
+from tqdm.auto import trange
+
 MAX_NUMBER_OF_VOICES = 15
+MAX_DURATIONS_SPLITS = 10
 
 # NOTE: Sharp is coded as <note_name>s
 # NOTE: Flat  is coded as <note_name>f
@@ -34,6 +38,11 @@ def get_score(
     key_mode : str = 'major',
     score_name : str = 'Example Score',
     minimum_unit : int = 16,
+    drop_last_bar : bool = True,
+    metronome_note : Tuple[int, int] = (1, 4),
+    metronome_beat : int = 60,
+    metronome_feel : str | None = None,
+    verbose : bool = False,
 ) -> Score:
     
     if isinstance(clef, str): clef = {name : clef for name in partition}
@@ -44,12 +53,16 @@ def get_score(
     num_bars = min(len(bar) - 1 for bar in partition.values())
 
     staffs = []
+
     for name, bars in partition.items():
         staff_clef = clef[name]
         if isinstance(staff_clef, str): staff_clef = {0 : staff_clef}
 
         voices = []
-        for idx in range(num_bars):
+        iterator = trange(num_bars - drop_last_bar, desc=f'Creating score | {name.capitalize()}')\
+                    if verbose else range(num_bars - drop_last_bar)
+    
+        for idx in iterator:
             bar = bars[idx]
 
             try:
@@ -95,7 +108,8 @@ def get_score(
                     if curr_voice > MAX_NUMBER_OF_VOICES:
                         raise ValueError('Runaway number of voices')
                     
-                clean_voices = add_slurs(bar_voices, minimum_unit=minimum_unit)
+                # clean_voices = add_slurs(bar_voices, minimum_unit=minimum_unit)
+                clean_voices = bar_voices.values()
                     
             bar_voices = Voice(clean_voices, name=f'{name}-bar:{idx}', simultaneous=True)
 
@@ -113,15 +127,31 @@ def get_score(
 
             if idx in time_signature:
                 abj_time = abjad.TimeSignature(time_signature[idx])
+                metronome_note = Duration(metronome_note)
+
+                abj_mark = MetronomeMark(
+                    reference_duration = metronome_note,
+                    units_per_minute   = metronome_beat,
+                    textual_indication = metronome_feel,
+                )
 
                 attach(abj_time, get_first_note(bar_voices))
+                attach(abj_mark, get_first_note(bar_voices))
 
             voices.append(bar_voices)
 
         staff = Staff(voices, name=name)
         
-        # abjad.attach(bar_line, staff)
         staffs.append(staff)
+
+    if verbose: iterator.set_description('Rewriting meter')
+
+    # By rewriting the meter we unsure that slurs are favored
+    # over the uglier dot-notation
+    meter = abjad.Meter(time, preferred_boundary_depth=0)
+    abjad.Meter.rewrite_meter(staffs, meter)
+
+    if verbose: iterator.set_description('Completed')    
 
     staffs = StaffGroup(staffs[::-1], lilypond_type='PianoStaff', simultaneous=True)
         
@@ -179,8 +209,13 @@ def parse_notes(
     duration = Duration(duration, min_unit)
 
     durations = [duration.equal_or_lesser_assignable]
+    num_dur_splits = 0
     while (duration := duration - duration.equal_or_lesser_assignable) > 0:
         durations.append(duration)
+        num_dur_splits += 1
+
+        if num_dur_splits > MAX_DURATIONS_SPLITS:
+            raise ValueError('Runaway number of duration splits')
 
     if isinstance(codes, str): codes = [codes]
 

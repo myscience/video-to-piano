@@ -4,3 +4,4 @@
 out/
 /video
 __pycache__
+.*

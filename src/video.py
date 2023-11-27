@@ -35,11 +35,14 @@ def go_to_next(
     capture : cv2.VideoCapture,
     old_frame : np.ndarray,
     thr : float = 1e-3,
-) -> Tuple[np.ndarray, int]:
+) -> Tuple[np.ndarray | None, int]:
     new_frame = old_frame.copy()
     skipped = 0
     while mse(new_frame, old_frame) < thr:
         ret, new_frame = capture.read()  
+
+        if new_frame is None: break
+        
         new_frame = trim_frame(new_frame)
 
         skipped += 1
@@ -78,6 +81,12 @@ def get_frames(
 
     while frame_seen < max_frames:
         frame, skipped = go_to_next(capture, frame, thr=frame_diff_thr)
+
+        # Exit clause in case of no next frame available 
+        # (i.e. the video has an outro)
+        if frame is None:
+            if feedback: feedback.update(max_frames - frame_seen)
+            break
 
         # Quantize the frame using provided color palette
         quantized = quantize_palette(frame, palette=palette, color_enhance=color_enhance)
