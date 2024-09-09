@@ -2,6 +2,7 @@
 /test.py
 /tmp.png
 out/
+old/
 /video
 __pycache__
 .*
