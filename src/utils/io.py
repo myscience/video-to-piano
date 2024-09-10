@@ -1,4 +1,5 @@
 from collections import defaultdict
+from itertools import product
 import cv2
 import numpy as np
 
@@ -55,7 +56,7 @@ def find_objs(
     frame : Frame,
     obj_col : Dict[str, Color],
     hue_span : int = 10,
-    min_area : int = 500,
+    min_area : int = 750,
 ) -> Dict[str, List[Box]]:
     if isinstance(obj_col, Color): obj_col = [obj_col]
     
@@ -176,6 +177,18 @@ def extract_notes(
         # ? left hand, and if so, to add it to both chords. But at one point
         # ? in time there will only be one color detected, so we need to check
         # ? the same note was pressed in the previous frame of the other hand.
+        # keys = note_color.keys()
+        # for key1, key2 in product(keys, keys):
+        #     if key1 == key2: continue
+        #     if key1 not in old_objs or key2 not in new_objs: continue
+        #     for box in new_objs[key2]:
+        #         if box in old_objs[key1] and box not in new_objs[key1]:
+        #             print('Triggered at frame:', num_frames)
+        #             print('Key1:', key1, 'Key2:', key2)
+        #             print('Note', key_layout[box])
+        #             print('Old notes:', key_layout[new_objs[key1][-1]])
+        #             new_objs[key1].append(box)
+        #             print('New notes:', key_layout[new_objs[key1][-1]])
         
         for key in note_color:
             # If the number of objects of the target color

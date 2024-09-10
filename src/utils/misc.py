@@ -44,21 +44,12 @@ RED   = Color(255, 0, 0)
 GREEN = Color(0, 255, 0)
 BLUE  = Color(0, 0, 255)
 
-def get_leaf(
-    voice : Container,
-    which : Literal['prev', 'curr', 'next'] = 'curr'
-) -> Note:
-    match which:
-        case 'prev': return leaf(voice, n=-1)
-        case 'curr': return leaf(voice, n=+0)
-        case 'next': return leaf(voice, n=+1)
-
 @dataclass
 class Configs:
     BPM : int = 60 # Beats per minute
     BPM_UNIT : int = 4 # Unit of note duration for BPM - 4 for quarter note
     MIN_UNIT : int = 4 # Minimum unit of note duration - 4 for quarter note
-    MIN_IN_SEC : int = 60  # Seconds in a minute
+    SEC_IN_MIN : int = 60  # Seconds in a minute
     MS_IN_SEC  : int = 1e3 # Milliseconds in a second
     
     time_signature : Tuple[int, int] = (4, 4)
@@ -75,8 +66,8 @@ class Box:
     y : int | float
     w : int | float
     h : int | float
-    pos_thr : float = 10
-    dim_thr : float = 10
+    pos_thr : float = 50
+    dim_thr : float = 50
     
     def __eq__(self, box : 'Box') -> bool:
         if not isinstance(box, Box): return False
@@ -97,6 +88,21 @@ class Box:
         w, h = other
         return Box(self.x / w, self.y / h, self.w / w, self.h / h, self.pos_thr / max(h, w), self.dim_thr / max(h, w))
 
+
+def get_leaf(
+    voice : Container,
+    which : Literal['prev', 'curr', 'next'] = 'curr'
+) -> Note:
+    match which:
+        case 'prev': return leaf(voice, n=-1)
+        case 'curr': return leaf(voice, n=+0)
+        case 'next': return leaf(voice, n=+1)
+
+def to_ms(duration : Duration, info : Configs) -> float:
+    n, d = duration.pair
+    return (n / d) * info.MIN_UNIT * (info.SEC_IN_MIN / info.BPM * info.MS_IN_SEC * info.MIN_UNIT / info.BPM_UNIT)
+
+
 @dataclass
 class RawNote:
     name : Notes
@@ -110,7 +116,7 @@ class RawNote:
     @property
     def duration(self) -> Duration:
         value = round(
-            self.time / (self.info.MIN_IN_SEC / self.info.BPM /
+            self.time / (self.info.SEC_IN_MIN / self.info.BPM /
             (self.info.MIN_UNIT / self.info.BPM_UNIT) * self.info.MS_IN_SEC)
         )
         
@@ -118,6 +124,18 @@ class RawNote:
             value,
             self.info.MIN_UNIT
         )
+    
+    @property
+    def valid(self) -> bool:
+        try:
+            _ = Note('a', self.duration)
+            return True
+        except AssignabilityError:
+            return False
+    
+    @property
+    def exist(self) -> bool:
+        return self.duration > 0
     
     @property
     def abjad(self) -> Note | Rest:
@@ -182,10 +200,9 @@ class RawNote:
             case 8:  sym = '♪'
             case 16: sym = '♬'
         if self.name == 'R': sym = '⏸️'
-        try:
-            _ = Note('a', self.duration)
-        except AssignabilityError:
-            sym = '⛔️'
+        if not self.valid: sym = '⛔️'
+        if not self.exist: sym = '💀'
+        
         return f'{self.name} ({value}{sym}) {"🔕 " if self.sustained else ""}({self.time:.0f} ms)'
     
     def __repr__(self) -> str:
@@ -210,17 +227,26 @@ class RawChord:
         self,
         notes : str | List[str] | RawNote | Set[RawNote],
         info : Configs = None,
-        duration : float = 0,
+        time : float | Duration = 0,
+        
+        # ! ADD ELAPSED TIME FOR EASIER DEBUGGING
+        elapse : float = 0,
+        
     ) -> None:
         info = info or Configs()
-        if isinstance(notes, str)    : notes = set([RawNote(notes, duration)])
-        if isinstance(notes, list)   : notes = set([RawNote(note, duration) for note in notes])
+        if isinstance(time, Duration):
+            # Convert duration to ms
+            n, d = time.pair
+            time = to_ms(time, info)
+        if isinstance(notes, str)    : notes = set([RawNote(notes, time)])
+        if isinstance(notes, list)   : notes = set([RawNote(note,  time) for note in notes])
         if isinstance(notes, RawNote): notes = set([notes])
         
         self._notes = notes
         self._info  = info
         
         for note in self._notes: note.info = info
+        # for note in self._notes: note.time = time
     
     @property
     def notes(self) -> List[Note]:
@@ -232,7 +258,14 @@ class RawChord:
             max([note.duration for note in self._notes])
         )
     
-    # FIXME: This implementation is not working. Also, duration is just a guess
+    @property
+    def time(self) -> float:
+        return sum([note.time for note in self._notes]) / len(self._notes)
+    
+    @property
+    def valid(self) -> bool:
+        return all(note.valid for note in self._notes)
+    
     @property
     def abjad(self) -> Chord | Rest:
         if any(isinstance(note, Rest) for note in self.notes): return Rest(self.duration)
@@ -249,6 +282,9 @@ class RawChord:
                 except PersistentIndicatorError: pass
         
         return chord
+    
+    def set_time(self, time : float) -> None:
+        for note in self._notes: note.time = time
         
     def __eq__(self, other : 'RawChord') -> bool:
         return self._notes == other._notes
@@ -429,42 +465,38 @@ def merge_chords(chords : List[RawChord]) -> List[List[RawChord]]:
     
     return merged
 
-def fix_invalid(chords : List[RawChord]) -> List[RawChord]:
-    out = []
+def fix_invalid(chords : List[RawChord]) -> List[RawChord]:    
+    # Try to patch invalid duration via merging
+    tmp : List[RawChord] = []
+    i = 0
+    while i < len(chords) - 2:
+        curr, next, post = chords[i], chords[i+1], chords[i+2]
+        
+        # This duration is invalid, try to merge with previous
+        if not curr.valid and next.valid and post.valid and curr & next and curr & post:
+            # Incorporate the curr & post chords into the prev one
+            print('Triggered for', f'{str(curr)}')
+            print('With next', f'{str(next)}')
+            print('With post', f'{str(post)}')
+            tmp.append(next.time + post.time + curr)
+            i += 2
+        
+        # Check whether current duration is invalid
+        else: tmp.append(curr)
+        
+        i += 1
     
     # Remove empty chords
+    out : List[RawChord] = []
+    
     i = 0
-    while i < len(chords) - 1:
-        if chords[i]:
-            out.append(chords[i])
-            i += 1
+    while i < len(tmp) - 1:
+        if tmp[i]:
+            out.append(tmp[i])
         else:
-            out.append(chords[i+1] + chords[i])
-            i += 2
+            tmp[i+1] += tmp[i]
+        i += 1
     
-    # Try to patch invalid duration via merging
-    # tmp = []
-    # i = 0
-    # while i < len(out) - 2:
-    #     curr, next, post = out[i], out[i+1], out[i+2]
-        
-    #     # Check whether current duration is invalid
-    #     try:
-    #         # Trigger note creation
-    #         _ = curr.abjad
-    #         tmp.append(curr)
-            
-    #     except AssignabilityError:
-    #         # This duration is invalid, try to merge with previous
-    #         if curr & next and curr & post:
-    #             # Incorporate the curr & post chords into the prev one
-    #             tmp.append(curr + next + post)
-                
-    #             i += 2
-    #     finally:
-    #         i += 1
-    
-    # return tmp
     return out
 
 def mark_sustained(chords : List[RawChord]) -> List[RawChord]:    
