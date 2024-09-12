@@ -1,16 +1,16 @@
-from collections import defaultdict
-from itertools import product
 import cv2
 import numpy as np
+from itertools import combinations
+from collections import defaultdict
 
-from typing import List, Tuple, Dict
-from dataclasses import dataclass
 from tqdm.auto import trange
+from dataclasses import dataclass
 from PIL import Image, ImageEnhance
-from .misc import BLACK, WHITE, Configs, RawChord, Color, Box, Layout
+from typing import List, Tuple, Dict
 
-def frame_to_pil(frame : np.ndarray) -> Image.Image:
-    return Image.fromarray(frame)
+from .utils import Configs, Color, Box, Layout
+from .utils import BLACK, WHITE
+from .music import RawChord
 
 @dataclass
 class Frame:
@@ -91,11 +91,16 @@ def extract_notes(
     key_layout : Layout,
     note_color : Dict[str, Color],
     skip_intro : int | None = None,
+    skip_outro : int | None = None,
     early_stop : int | None = None,
     trim_areas : Tuple[slice, slice] = (slice(-250, None), slice(None, None)),
     configs : Configs = Configs(),
     verbose : bool = True,
-) -> Tuple[List[RawChord], Dict[str, int]]:
+) -> Tuple[
+    Dict[str, List[RawChord]],
+    Dict[str, int],
+    Dict[str, List[Frame]],
+]:
     '''Divide the video frames into chunks, where the split
     is decided by the color difference between the current frame
     and the target color.
@@ -126,7 +131,8 @@ def extract_notes(
     frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
     
     skip_intro = skip_intro or 0
-    early_stop = early_stop or frame_count
+    skip_outro = skip_outro or 0
+    early_stop = early_stop or (frame_count - skip_outro)
     
     # Skip the intro frames if necessary
     while skip_intro:
@@ -156,7 +162,7 @@ def extract_notes(
         frames[k].append(last)
     
     num_frames = 0
-    feedback = trange(0, early_stop, desc='Extracting Frames') if verbose else None
+    feedback = trange(0, early_stop, desc='Parsing Video') if verbose else None
     while ret and num_frames < early_stop:
         ret, frame = capture.read()
         if not ret: break
@@ -171,24 +177,6 @@ def extract_notes(
             frame,
             note_color,
         )
-        
-        # ? Maybe here (where we are still synchronized with the video) to
-        # ? check if there is a note that is pressed both by the right and
-        # ? left hand, and if so, to add it to both chords. But at one point
-        # ? in time there will only be one color detected, so we need to check
-        # ? the same note was pressed in the previous frame of the other hand.
-        # keys = note_color.keys()
-        # for key1, key2 in product(keys, keys):
-        #     if key1 == key2: continue
-        #     if key1 not in old_objs or key2 not in new_objs: continue
-        #     for box in new_objs[key2]:
-        #         if box in old_objs[key1] and box not in new_objs[key1]:
-        #             print('Triggered at frame:', num_frames)
-        #             print('Key1:', key1, 'Key2:', key2)
-        #             print('Note', key_layout[box])
-        #             print('Old notes:', key_layout[new_objs[key1][-1]])
-        #             new_objs[key1].append(box)
-        #             print('New notes:', key_layout[new_objs[key1][-1]])
         
         for key in note_color:
             # If the number of objects of the target color
@@ -206,6 +194,7 @@ def extract_notes(
                 chords[key].append(RawChord(
                     key_layout[boxes],
                     configs,
+                    elapsed=frame.elapsed,
                 ))
                 
                 frames[key].append(frame)
@@ -222,8 +211,21 @@ def extract_notes(
         'video_frame_count' : frame_count,
         'video_frame_width' : frame_width,
         'video_frame_height' : frame_height,
-        'notes_onset' : {k : v[0].elapsed for k, v in frames.items()},
+        'video_fraction' : num_frames / frame_count,
+        'notes_onset'  : {k : v[ 0].elapsed for k, v in frames.items()},
+        'notes_offset' : {k : v[-1].elapsed for k, v in frames.items()},
         'detected_chords' : {k : len(v) for k, v in chords.items()},
     }
+    
+    # If there is a difference in onset/offset times, we
+    # need to align them by inserting rests when appropriate
+    keys = chords.keys()
+    for key1, key2 in combinations(keys, 2):
+        if abs(diff := info['notes_onset'][key1] - info['notes_onset'][key2]) > 2 * info['video_fps']:
+            if diff < 0: chords[key2].insert(0, RawChord('R', time=abs(diff), info=configs))
+            else:        chords[key1].insert(0, RawChord('R', time=abs(diff), info=configs))
+        if abs(diff := info['notes_offset'][key1] - info['notes_offset'][key2]) > 2 * info['video_fps']:
+            if diff < 0: chords[key2].append(RawChord('R', time=abs(diff), info=configs))
+            else:        chords[key1].append(RawChord('R', time=abs(diff), info=configs))
     
     return chords, info, frames

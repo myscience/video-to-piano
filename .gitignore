@@ -6,3 +6,4 @@ old/
 /video
 __pycache__
 .*
+*.ipynb
