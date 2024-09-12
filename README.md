@@ -10,7 +10,7 @@ The theory is straightforward: pick you favorite piano video-tutorial, parse the
 
 ## Usage
 
-The package
+The package exposes a main script `parse.py` which parse a input video file and tries to build a piano-sheet music out of it. Here is an example of how it can be used.
 
 ```bash
 python parse.py video/<path_to_video>.mp4
@@ -36,5 +36,5 @@ python parse.py video/<path_to_video>.mp4
 This package builds mainly on top of `open-cv` and `abjad`, to install the required packages simply run
 
 ```bash
-pip install -i requirements.txt
+pip install -r requirements.txt
 ```
