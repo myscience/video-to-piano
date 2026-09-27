@@ -13,6 +13,7 @@ dependencies = [
     "soxr>=0.5",
     "yt-dlp[default,deno]>=2026.8",
     "beat-this>=1.1",
+    "music21>=9.1",
 ]
 
 [project.optional-dependencies]

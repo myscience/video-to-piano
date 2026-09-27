@@ -44,15 +44,24 @@ Personal-use tool. Scope: **solo piano audio only** (no band/mix separation, for
 
 ```
 src/pianoscribe/
-  cli.py                 # pianoscribe fetch | import | transcribe | truth | eval
-  library.py             # Song: per-song folder paths + meta.json
+  cli.py                 # pianoscribe fetch | import | transcribe | merge | beats | score | truth | eval
+  library.py             # Song: every per-song path, in one place
   sources/               # yt-dlp download, ffmpeg decode -> mono 44.1 kHz audio.wav
-  transcribe/            # NoteEvent/Transcription + pluggable backends (Transcriber protocol)
-  eval/                  # Synthesia-video ground truth, mir_eval metrics, piano-roll plots
-  rhythm/ notation/ render/ server/     # planned (stages B, C, viewer)
+  transcribe/            # NoteEvent/Transcription + pluggable backends, ensemble merge
+  rhythm/                # beats and bars, quantization
+  notation/              # hands, score building (music21 -> MusicXML)
+  render/                # MusicXML -> PDF (LilyPond)
+  eval/                  # Synthesia-video answer key, mir_eval metrics, piano-roll plots
+  server/                # planned: viewer backend
 web/                     # planned: viewer
-library/<song>/          # gitignored: source_audio.m4a, audio.wav, meta.json,
-                         #   notes/{transkun,bytedance,video}.mid, eval/roll.png, ...
+library/<song>/          # gitignored
+  <song>.pdf             #   the final score
+  source/                #   meta.json, video.mp4 (optional), original.<ext>, audio.wav
+  notes/                 #   <backend>.mid: transkun, bytedance, ensemble
+  rhythm/                #   activations.npz, beats.json
+  truth/                 #   notes.mid, bars.json: answer key from a Synthesia video
+  score/                 #   score.musicxml, score.ly, score-page<N>.png
+  eval/                  #   roll.png
 models/                  # gitignored: downloaded checkpoints
 ```
 
@@ -119,7 +128,7 @@ reports mir_eval note metrics (onset ±50 ms; "+off" also requires the offset wi
   over the runner-up phase is printed as a confidence (the usual confusion is the half-bar, beat 3
   in 4/4).
 - **Answer key:** Synthesia videos draw faint full-width bar lines that scroll with the notes
-  (`truth_bars.json`). They show up as a lift of the *median* brightness across the width, which
+  (`truth/bars.json`). They show up as a lift of the *median* brightness across the width, which
   note bars never cause.
 
 | 'exile' (83 bars, 4/4, 74 BPM) | beat F | downbeat F |
@@ -178,6 +187,31 @@ On 'exile' the hands overlap by more than an octave (left up to F#4, right down 
   right-hand A#3–C#4–A#4 chord. For the chord as heard, splitting it between the hands is right.
   On chords where video and audio agree, the DP is at 96.6%.
 
+## Stage B.4 + C: the score
+
+`pianoscribe score <song>` → `score.musicxml` → `score.pdf` (via `musicxml2ly` + LilyPond;
+`--png` for page previews). First version, one voice per hand:
+
+- **Song span:** notes are split at silences ≥ 1 s; the longest part is the song, extended over
+  neighbours whose notes fit its key (≥ 85% in scale). Drops a tutorial's intro/outro jingles
+  (on 'exile': 5.4 s … 277.8 s).
+- **Key and spelling:** Krumhansl key estimate (6+ accidentals → the flat-side key: G♭, not F♯);
+  scale notes take the key's names (B♭, not A♯), chromatic notes lean like the key signature.
+- **Written lengths** (`written_end`): a chord lasts until the hand's next chord; a gap becomes a
+  rest only if it's a clear silence. Absorbed when the pedal is down, when it's ≤ an eighth, or
+  when it's shorter than half the chord. Readability over fidelity, as arrangers do. The
+  half-the-chord rule alone left 29 sixteenth rests (a 16th note, then a 16th gap); the eighth
+  floor removes them all, keeping 3 + 7 real rests.
+- **Clefs** (`choose_clefs`): a DP over the bars of each staff minimizing the exact ledger-line
+  count of every note, plus 8 per clef change and 1 per bar away from the staff's home clef. The
+  first bar's clef is free (a low opening *starts* in bass clef instead of switching after one
+  bar). A change never lands mid-sustain: when a note is tied across that barline (48 of 84
+  right-hand bars begin with a tied note, pop syncopation), it moves back to just before the
+  tied note. On 'exile': right hand 1 change (bass for the opening, treble from bar 5), left
+  hand none. A switch cost of 4 would add 4 changes to save only 20 ledger lines in the piece.
+- Known limits: held notes under a moving line are cut (voices), note lengths from audio are only
+  84% exact, 2/4 vs 4/4 and 6/8 aren't distinguished, no pickup (anacrusis) bars yet.
+
 ### Gotchas found along the way (keep in mind for other videos)
 
 - White-key notes are drawn in **pastel** shades (light blue, saturation ~0.28) and black-key
@@ -192,15 +226,18 @@ On 'exile' the hands overlap by more than an octave (left up to F#4, right down 
 - A faint bar line can be detected twice, a few ms apart. Without merging, each duplicate
   became an extra bar, which silently capped beat/downbeat F at 97.6% and drifted the rhythm
   metric's bar numbering by whole bars.
+- music21 writes clef *changes* in a two-staff part as bare `<clef>` elements. MusicXML reads
+  that as staff 1, but `musicxml2ly` put a right-hand change on the left-hand staff. The
+  exporter now numbers every clef by the staff of the next note after it.
 - Intro/outro cards have other layouts. Frames where the red hit line is missing are skipped,
   and only the span the video covers is scored.
 
 ## Roadmap
 
 1. ✅ **Spike:** repo reset, fetch, two backends, video ground truth, eval harness.
-2. **Stage B core:** ✅ beats and bars → ✅ quantization → ✅ hand split → voices and written
-   lengths → `music21` score → MusicXML.
-3. **Stage C:** MusicXML → PDF (LilyPond via `musicxml2ly`, or Verovio).
+2. **Stage B core:** ✅ beats and bars → ✅ quantization → ✅ hand split → ✅ first score (one voice
+   per hand) → voices (held notes under moving lines), pickup bars.
+3. ✅ **Stage C:** MusicXML → PDF via LilyPond (`musicxml2ly`).
 4. **Viewer:** FastAPI + Verovio. The score is synced to the *original audio* through the beat
    map, so the cursor follows rubato. Loop sections, slow down, hide a hand; open it on an iPad.
 5. **Search + library UI** (`yt-dlp "ytsearch10:<song> piano"`, pick from candidates).
@@ -217,6 +254,7 @@ uv run pianoscribe fetch "https://www.youtube.com/watch?v=UtGNBYegDBc" --song ex
 uv run pianoscribe transcribe exile --backend all
 uv run pianoscribe merge exile      # transkun onsets + ByteDance note ends -> notes/ensemble.mid
 uv run pianoscribe beats exile      # beats + bars -> beats.json (checkpoint: models/beat_this/final0.ckpt)
-uv run pianoscribe truth exile      # only for Synthesia-style videos, needs library/exile/source.mp4
+uv run pianoscribe score exile --png  # -> library/exile/exile.pdf (+ MusicXML, page PNGs in score/)
+uv run pianoscribe truth exile      # only for Synthesia-style videos: library/exile/source/video.mp4
 uv run pianoscribe eval exile --plot
 ```

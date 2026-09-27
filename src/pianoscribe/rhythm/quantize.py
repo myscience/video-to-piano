@@ -57,3 +57,12 @@ def quantize(t: Transcription, grid: BeatGrid, step: int = 3) -> list[QuantizedN
     ends = snap(to_beats(np.array([n.offset for n in t.notes]), grid), step)
     ends = np.maximum(ends, starts + step)  # nothing shorter than one grid step
     return [QuantizedNote(n.pitch, int(s), int(e), n.velocity, n.hand) for n, s, e in zip(t.notes, starts, ends)]
+
+
+def quantize_pedal(t: Transcription, grid: BeatGrid, step: int = 3) -> list[tuple[int, int]]:
+    """Sustain-pedal (down, up) intervals snapped to the same grid as the notes."""
+    if not t.pedal:
+        return []
+    down = snap(to_beats(np.array([a for a, _ in t.pedal]), grid), step)
+    up = snap(to_beats(np.array([b for _, b in t.pedal]), grid), step)
+    return [(int(a), int(max(b, a + step))) for a, b in zip(down, up)]

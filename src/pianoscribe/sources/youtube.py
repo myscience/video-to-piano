@@ -11,7 +11,7 @@ from .audio import extract_wav
 def download_audio(url: str, song: Song) -> Path:
     opts = {
         "format": "bestaudio[ext=m4a]/bestaudio",
-        "outtmpl": str(song.root / "source_audio.%(ext)s"),
+        "outtmpl": song.download_template,
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
@@ -26,6 +26,6 @@ def download_audio(url: str, song: Song) -> Path:
         channel=info.get("channel"),
         url=info.get("webpage_url", url),
         duration=info.get("duration"),
-        source_audio=downloaded.name,
+        original_audio=downloaded.name,
     )
     return extract_wav(downloaded, song.audio)

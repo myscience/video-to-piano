@@ -68,6 +68,31 @@ def cmd_beats(args: argparse.Namespace) -> None:
             print("  ⚠ ambiguous bar phase (often a half-bar): check the barlines, or pass --meter")
 
 
+def cmd_score(args: argparse.Namespace) -> None:
+    from .notation.hands import decode_hands
+    from .notation.score import build_score, song_span, write_musicxml
+    from .render.lilypond import musicxml_to_pdf
+    from .rhythm.beats import BeatGrid
+    from .rhythm.quantize import quantize, quantize_pedal
+    from .transcribe import Transcription
+
+    song = Song.get(args.song)
+    grid = BeatGrid.load(song.beats)
+    t = Transcription.load(song.notes(args.notes))
+    start, end = song_span(t)
+    t = Transcription([n for n in t.notes if start <= n.onset <= end], t.pedal)
+    print(f"  song span {start:.1f}s .. {end:.1f}s (jingles and silences trimmed)")
+    q = quantize(t, grid)
+    title, composer = song.credits()
+    score = build_score(q, decode_hands(q), grid.beats_per_bar, grid.tempo,
+                        args.title or title, args.composer or composer, pedal=quantize_pedal(t, grid))
+    write_musicxml(score, song.score)
+    k = score.recurse().getElementsByClass("Key").first()
+    print(f"✓ {len(q)} notes, key {k.name if k else '?'} -> {song.score}")
+    pdf = musicxml_to_pdf(song.score, song.pdf, png=args.png)
+    print(f"✓ engraved -> {pdf}")
+
+
 def cmd_merge(args: argparse.Namespace) -> None:
     from .transcribe import Transcription
     from .transcribe.ensemble import merge
@@ -84,14 +109,14 @@ def cmd_truth(args: argparse.Namespace) -> None:
     from .eval.synthesia import measure, read_bar_lines, read_notes
 
     song = Song.get(args.song)
-    video = Path(args.video) if args.video else song.root / "source.mp4"
+    video = Path(args.video) if args.video else song.video
     t0 = time.perf_counter()
     geo = measure(video)
     truth = read_notes(video, geo)
-    truth.save(song.notes("video"))
+    truth.save(song.truth_notes)
     hands = {h: sum(n.hand == h for n in truth.notes) for h in ("L", "R", None)}
     print(f"✓ {len(truth.notes)} notes (L={hands['L']}, R={hands['R']}, unknown={hands[None]}) "
-          f"-> {song.notes('video')}")
+          f"-> {song.truth_notes}")
     bars = read_bar_lines(video, geo)
     song.truth_bars.write_text(json.dumps({"downbeats": [round(float(t), 4) for t in bars]}))
     print(f"✓ {len(bars)} bar lines (every {np.median(np.diff(bars)):.3f}s) -> {song.truth_bars} "
@@ -105,9 +130,9 @@ def cmd_eval(args: argparse.Namespace) -> None:
     from .transcribe import Transcription
 
     song = Song.get(args.song)
-    ref = Transcription.load(song.notes(args.reference))
-    ests = {p.stem: Transcription.load(p) for p in sorted(song.notes(args.reference).parent.glob("*.mid"))
-            if p.stem != args.reference}
+    ref_path = song.notes(args.reference) if args.reference else song.truth_notes
+    ref = Transcription.load(ref_path)
+    ests = {name: Transcription.load(p) for name, p in song.all_notes().items() if p != ref_path}
 
     # The reference may be offset in time (video vs audio) and octave (keyboard naming): one
     # global correction, pooled over all backends so every backend is scored against the same truth.
@@ -125,7 +150,7 @@ def cmd_eval(args: argparse.Namespace) -> None:
     print(f"  scoring {lo:.1f}s .. {hi:.1f}s (reference span)")
 
     print(f"\n{'backend':10} {'notes':>6} {'P':>6} {'R':>6} {'F1':>6} {'F1+off':>7}   (onset ±50 ms; +off: offset within 20%)")
-    print(f"{args.reference:10} {len(ref.notes):6d}   (reference)")
+    print(f"{args.reference or 'truth':10} {len(ref.notes):6d}   (reference)")
     for name, est in ests.items():
         m = evaluate(ref, est)
         print(f"{name:10} {len(est.notes):6d} {m['precision']:6.1%} {m['recall']:6.1%} {m['f1']:6.1%} "
@@ -174,7 +199,7 @@ def cmd_eval(args: argparse.Namespace) -> None:
     if args.plot:
         from .eval.plots import piano_roll
 
-        out = song.root / "eval" / "roll.png"
+        out = song.eval_file("roll.png")
         piano_roll(ref, ests, out, start=args.plot_start, length=args.plot_length)
         print(f"\n✓ piano roll -> {out}")
 
@@ -209,6 +234,14 @@ def main() -> None:
     p.add_argument("--device", default="auto", help="auto | cpu | mps | cuda")
     p.set_defaults(func=cmd_beats)
 
+    p = sub.add_parser("score", help="Notes + beats -> <song>.pdf (MusicXML in score/)")
+    p.add_argument("song")
+    p.add_argument("--notes", default="ensemble", help="Which notes/<name>.mid to engrave")
+    p.add_argument("--title")
+    p.add_argument("--composer")
+    p.add_argument("--png", action="store_true", help="Also write PNG previews of each page")
+    p.set_defaults(func=cmd_score)
+
     p = sub.add_parser("merge", help="Combine two transcriptions: starts from one, ends from another")
     p.add_argument("song")
     p.add_argument("--onsets", default="transkun")
@@ -216,14 +249,14 @@ def main() -> None:
     p.add_argument("--name", default="ensemble", help="Output: notes/<name>.mid")
     p.set_defaults(func=cmd_merge)
 
-    p = sub.add_parser("truth", help="Ground-truth notes from a Synthesia-style video -> notes/video.mid")
+    p = sub.add_parser("truth", help="Answer key from a Synthesia-style video -> truth/notes.mid, truth/bars.json")
     p.add_argument("song")
-    p.add_argument("--video", help="Defaults to library/<song>/source.mp4")
+    p.add_argument("--video", help="Defaults to library/<song>/source/video.mp4")
     p.set_defaults(func=cmd_truth)
 
     p = sub.add_parser("eval", help="Score every notes/*.mid against a reference transcription")
     p.add_argument("song")
-    p.add_argument("--reference", default="video")
+    p.add_argument("--reference", help="Score against notes/<name>.mid instead of truth/notes.mid")
     p.add_argument("--plot", action="store_true", help="Also save a piano-roll comparison image")
     p.add_argument("--plot-start", type=float, default=60.0)
     p.add_argument("--plot-length", type=float, default=8.0)
