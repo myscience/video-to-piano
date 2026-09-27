@@ -254,6 +254,44 @@ Verovio (rendered once on the server: no WASM in the browser), plus `sync.json`.
 - The viewer's engraving is Verovio's and the PDF's is LilyPond's: same notes, slightly
   different layout.
 
+## Adding songs
+
+`pianoscribe add <url-or-file> [--title --composer]` runs everything (fetch → both transcribers
+→ merge → beats → score) through `pipeline.py`, the same functions the CLI steps, the viewer and
+the edit rebuilds use. In the viewer, **＋ Add** searches YouTube (yt-dlp metadata only), takes a
+pasted link, or uploads a file; you confirm title and composer (⇅ swaps them: a video title can
+be "artist - song" or "song - artist", and explicit credits are saved in `meta.json` so they
+win over guesses), then a background job (one at a time) reports each step until the song opens.
+
+## Correcting a score ("great draft + easy correction")
+
+Edits never touch the pipeline's outputs: they live in `score/edits.json` and are replayed on the
+quantized notes at every build (`notation/edits.py`), so re-running any stage keeps them.
+
+- Each edit names its note by `{pitch, tick}`: the note of that pitch *sounding* at that tick,
+  so clicking any part of a tied note finds the whole note, and edits compose in sequence.
+  Ops are relative (pitch ±semitones, length/move ±16ths, hand, delete, add a note).
+- **A hand correction steers the hand decoder** instead of just overriding one note: only splits
+  agreeing with it are allowed, so the best path re-plans around it (neighbours in the same run
+  follow). A length edit is kept exactly (`locked`): no legato, gap or reach rule touches it.
+- In the viewer, **✎ Edit (E)**: click a note, then ▲▼ (⇧ octave), L/R, −/+ length, ◀▶ move,
+  ＋ note, delete, all on the keyboard too. The note is marked pending instantly and the
+  re-engraved preview (saved + pending edits, rendered but not written) replaces the page in
+  ~3 s with the selection following the note. Undo (⌘Z), Discard, Save (⌘S: append to
+  `edits.json`, rebuild MusicXML, PDF and viewer, ~6 s), Revert all.
+
+## Second song: "Never Gonna Give You Up" (PianoX, a filmed pianist)
+
+- Transcribed without changes: 1,574 notes, 143–277 pedal presses (a real player, versus the
+  MIDI-rendered 'exile'). Beats: 115.4 BPM, 4/4, bar phase margin 0.67. No bar-line answer key
+  here, so the grid was checked by **grid fit**: with the DP, 100% of onsets fall within 1/16 beat
+  of the tracked 16th grid (median 0.013 beats) at tightness 10–300; the performance is steady
+  (±0.6 BPM), so it didn't test rubato hard. Key estimate D♭ major.
+- The video isn't an answer key yet: bar colours encode time-to-hit (red → purple → blue), not
+  hands; blue particle effects swirl above the hit line; the player's hands cover the keys.
+  Reading it needs a brightness (not saturation) test, a band away from the effects, and key
+  positions from the bars themselves (it's a full 88-key keyboard).
+
 ### Gotchas found along the way (keep in mind for other videos)
 
 - White-key notes are drawn in **pastel** shades (light blue, saturation ~0.28) and black-key
@@ -277,6 +315,12 @@ Verovio (rendered once on the server: no WASM in the browser), plus `sync.json`.
 - music21 numbers voices 1, 2, ... in *both* staves of the joined part, and musicxml2ly groups
   notes by voice number across the part, merging the hands (barlines vanished, staves drifted).
   The exporter renumbers: staff 1 voices 1-4, staff 2 voices 5-8, as notation programs do.
+- The Verovio wheel's compiled-in resource path is its build machine's temp folder. The package
+  fixes the default at import, but not for other threads: in the server (requests run in worker
+  threads) fonts failed to load and some scores wouldn't render. Each toolkit now sets it.
+- Neither music21 nor Verovio is thread-safe: builds and previews take one lock.
+- Spelling every note rebuilt a music21 scale each time (~8 ms × 4,800 notes): cached per key,
+  a full build went from 11–17 s to 6–8 s and a preview from 14 s to ~3 s.
 - Intro/outro cards have other layouts. Frames where the red hit line is missing are skipped,
   and only the span the video covers is scored.
 
@@ -288,11 +332,13 @@ Verovio (rendered once on the server: no WASM in the browser), plus `sync.json`.
 3. ✅ **Stage C:** MusicXML → PDF via LilyPond (`musicxml2ly`).
 4. ✅ **Viewer:** FastAPI + Verovio, synced to the original audio through the beat map. Next:
    hide a hand, practice mode with a MIDI keyboard.
-5. **Search + library UI** (`yt-dlp "ytsearch10:<song> piano"`, pick from candidates).
+5. ✅ **Add songs** from the viewer (search / link / upload) and ✅ **correct scores** in it.
+   Next: video answer key for filmed-pianist videos, faster previews (only re-engrave the bars
+   that changed), hands-separate synth playback, MIDI keyboard wait mode, fingering.
 6. Stretch: Web MIDI practice mode (wait-for-correct-notes), video hand hints, Demucs for
    non-solo recordings.
 
-## Setup
+## Setup (or just: `uv run pianoscribe add "<url>"`)
 
 ```bash
 brew install uv ffmpeg lilypond

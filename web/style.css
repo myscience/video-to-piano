@@ -43,7 +43,8 @@ body {
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
-.group { display: flex; align-items: center; gap: 8px; }
+.group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+button, a#pdf { white-space: nowrap; }
 .song { flex: 1 1 260px; min-width: 0; }
 #credits { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .muted { color: var(--muted); }
@@ -113,4 +114,101 @@ main.line { display: flex; align-items: center; min-height: calc(100vh - 120px);
   .bar { padding: 8px 12px; gap: 8px; }
   main { padding: 8px 0; }
   .page { border-radius: 0; }
+}
+
+/* ---- correcting the score ---------------------------------------------------------------- */
+:root { --sel: #e07b00; }
+.page g.note.selected, .strip g.note.selected { fill: var(--sel); stroke: var(--sel); }
+.page g.note.pending, .strip g.note.pending { opacity: 0.35; }
+body.editing main { padding-bottom: 190px; }
+button.danger { color: #c63a3a; }
+button .badge, #editToggle[data-pending]::after {
+  content: attr(data-pending);
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--sel);
+  color: #fff;
+  font-size: 12px;
+}
+.editor {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 20;
+  width: min(760px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+.editor[hidden] { display: none; }
+.ed-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ed-group { display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; }
+.ed-status { border-top: 1px solid var(--line); padding-top: 8px; }
+.spacer { flex: 1; }
+#edBusy { font-size: 13px; }
+
+/* ---- adding a song ----------------------------------------------------------------------- */
+dialog#addDialog {
+  width: min(680px, calc(100% - 24px));
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
+}
+dialog#addDialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+.add { display: flex; flex-direction: column; gap: 12px; padding: 18px; }
+.add h2 { margin: 0; font-size: 18px; }
+.add-search { display: flex; gap: 8px; }
+.add input[type="search"], .credits-form input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+.results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 45vh; overflow-y: auto; }
+.results:empty { display: none; }
+.results li {
+  display: grid;
+  grid-template-columns: 112px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.results li:hover, .results li.on { border-color: var(--accent); }
+.results img { width: 112px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: var(--line); }
+.results .t { font-weight: 600; line-height: 1.25; }
+.results .m { color: var(--muted); font-size: 13px; }
+.upload { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
+.details { display: flex; flex-direction: column; gap: 10px; }
+.details[hidden], .progress[hidden] { display: none; }
+.chosen { font-weight: 600; }
+.credits-form { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: end; }
+.credits-form label { flex-direction: column; align-items: stretch; gap: 4px; font-size: 13px; }
+.steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+.steps li.done { color: var(--muted); }
+.steps li.done::marker { content: "✓  "; }
+.steps li.now { font-weight: 600; color: var(--accent); }
+.add-foot { display: flex; justify-content: flex-end; }
+.job { font-size: 13px; }
+@media (max-width: 640px) {
+  .credits-form { grid-template-columns: 1fr; }
+  .results li { grid-template-columns: 84px 1fr; }
+  .results img { width: 84px; }
 }

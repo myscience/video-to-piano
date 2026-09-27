@@ -10,6 +10,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from dataclasses import replace
 from fractions import Fraction
+from functools import lru_cache
 from itertools import groupby
 from pathlib import Path
 
@@ -35,10 +36,17 @@ def estimate_key(pitches: list[int], weights: list[float]) -> key.Key:
     return k
 
 
+@lru_cache(maxsize=32)
+def _scale_names(tonic: str, mode: str) -> dict[int, str]:
+    """Pitch class -> the key's name for it. Cached: building a music21 scale costs ~8 ms, and
+    spelling every note that way made a full build take ~11 s longer."""
+    return {p.pitchClass: p.name for p in key.Key(tonic, mode).getScale(mode).getPitches()}
+
+
 def spell(midi: int, k: key.Key) -> pitch.Pitch:
     """The key's own name for scale notes (Bb, not A#, in Gb major); chromatic notes lean the
     way the key signature does (flats in flat keys, sharps in sharp keys)."""
-    scale = {p.pitchClass: p.name for p in k.getScale(k.mode).getPitches()}
+    scale = _scale_names(k.tonic.name, k.mode)
     p = pitch.Pitch(midi=midi)
     if midi % 12 in scale:
         p = pitch.Pitch(scale[midi % 12])
@@ -123,7 +131,10 @@ def hand_events(notes: list[QuantizedNote], pedal: list[tuple[int, int]] = (),
         start = group[0].start
         end = max(n.end for n in group)
         nxt = groups[i + 1][0].start if i + 1 < len(groups) else None
-        if nxt is not None:
+        locked = [n.end for n in group if n.locked]
+        if locked:  # length set by an edit: exactly that, only cut by the hand's next chord
+            end = min(max(locked), nxt) if nxt is not None else max(locked)
+        elif nxt is not None:
             gap_lo, gap_hi = min(end, nxt), nxt
             held = any(a < gap_hi and b > gap_lo for a, b in pedal)
             end = written_end(start, end, nxt, held, max_bridge)
@@ -213,8 +224,9 @@ def cut_out_of_reach(events: list, hand: list[QuantizedNote], reach: int = MAX_S
     """End a held note as soon as the same hand plays something beyond an octave from it: one
     hand can't hold it and play there (the remainder becomes a rest)."""
     out = []
+    locked = {(n.start, n.pitch) for n in hand if n.locked}
     for s, length, pitches in events:
-        if pitches:
+        if pitches and not any((s, p) in locked for p in pitches):
             far = [n.start for n in hand if s < n.start < s + length
                    and max(pitches + [n.pitch]) - min(pitches + [n.pitch]) > reach]
             if far:

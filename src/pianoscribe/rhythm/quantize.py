@@ -40,6 +40,7 @@ class QuantizedNote:
     end: int  # ticks, > start
     velocity: int
     hand: Hand | None = None
+    locked: bool = False  # written length set by hand (an edit): kept exactly, never re-derived
 
     @property
     def duration(self) -> int:

@@ -110,7 +110,8 @@ def split_options(pitches: list[int], max_span: int = MAX_SPAN, max_notes: int =
 
 
 def decode_hands(notes: list[QuantizedNote], move: float = 1.0, free: int = 5, cross: float = 30.0,
-                 start: tuple[int, int] = (48, 72), **limits) -> list[Hand]:
+                 start: tuple[int, int] = (48, 72), forced: dict[int, Hand] | None = None,
+                 **limits) -> list[Hand]:
     """Globally best hand assignment: dynamic programming over where the two hands are.
 
     State: the pitch each hand is at (88 x 88). Each chord is split as in `split_options`; a
@@ -122,7 +123,13 @@ def decode_hands(notes: list[QuantizedNote], move: float = 1.0, free: int = 5, c
 
     On 'exile' (ensemble notes): greedy 94.9%; free 0: 95.1%, 5: 96.1%, 12: 94.7%. Anchoring a
     hand at its inner edge instead of its mean pitch was worse (94.5-94.8%); `cross` barely matters.
+
+    forced: {note index: hand} from user corrections. Only splits agreeing with them are allowed,
+    so the path re-plans around a correction and fixes its neighbours too (a wrong run usually
+    needs one click). If a chord's corrections can't be one lower/upper split, they're applied
+    after decoding instead.
     """
+    forced = forced or {}
     pos = np.arange(KEYS)
     travel = move * np.maximum(np.abs(pos[:, None] - pos[None, :]) - free, 0).astype(float)  # a -> b
     crossing = cross * (pos[:, None] > pos[None, :])  # [left, right]: left above right
@@ -137,7 +144,11 @@ def decode_hands(notes: list[QuantizedNote], move: float = 1.0, free: int = 5, c
         new = np.full((KEYS, KEYS), np.inf)
         split = np.full((KEYS, KEYS), -1, np.int8)
         prev = np.zeros((KEYS, KEYS), np.int16)
-        for k, static in split_options(pitches, **limits):
+        lo = max((r + 1 for r, i in enumerate(group) if forced.get(i) == "L"), default=0)
+        hi = min((r for r, i in enumerate(group) if forced.get(i) == "R"), default=n)
+        options = split_options(pitches, **limits)
+        options = [(k, c) for k, c in options if lo <= k <= hi] or options
+        for k, static in options:
             left = round(sum(pitches[:k]) / k) - LOWEST if k else None
             right = round(sum(pitches[k:]) / (n - k)) - LOWEST if k < n else None
             if left is not None and right is not None:  # both hands move: one target state
@@ -172,4 +183,6 @@ def decode_hands(notes: list[QuantizedNote], move: float = 1.0, free: int = 5, c
         for rank, i in enumerate(group):
             hands[i] = "L" if rank < k else "R"
         state = int(prev[left, right])
+    for i, hand in forced.items():
+        hands[i] = hand
     return hands

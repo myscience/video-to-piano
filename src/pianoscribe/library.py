@@ -7,7 +7,8 @@ can be re-run in isolation and every intermediate can be inspected.
       notes/         <backend>.mid: transcriptions (transkun, bytedance, ensemble, ...)
       rhythm/        activations.npz, beats.json
       truth/         notes.mid, bars.json: answer key read from a Synthesia video (evaluation)
-      score/         score.musicxml, score.ly, score-page<N>.png; view/ (viewer SVGs + timing)
+      score/         edits.json (your corrections), score.musicxml, score.ly, score-page<N>.png,
+                     view/ (viewer SVGs + timing)
       eval/          roll.png
 """
 
@@ -93,6 +94,11 @@ class Song:
         return self._in("score", "score.musicxml")
 
     @property
+    def edits(self) -> Path:
+        """User corrections, replayed on every build (never overwritten by the pipeline)."""
+        return self._in("score", "edits.json")
+
+    @property
     def view_dir(self) -> Path:
         """Viewer files: SVG pages, notes.json (note timemap), sync.json (score <-> audio time)."""
         d = self._in("score", "view")
@@ -121,8 +127,13 @@ class Song:
         self.meta_path.write_text(json.dumps(self.read_meta() | fields, indent=2))
 
     def credits(self) -> tuple[str, str]:
-        """(title, composer) guessed from a video title like 'exile - Taylor Swift | Piano Tutorial'."""
-        raw = self.read_meta().get("title") or self.slug
+        """(title, composer): as set explicitly (meta 'song_title'/'composer'), else guessed from a
+        video title like 'exile - Taylor Swift | Piano Tutorial'. The guess can't know whether a
+        title is 'song - artist' or 'artist - song', so explicit credits always win."""
+        meta = self.read_meta()
+        if meta.get("song_title"):
+            return meta["song_title"], meta.get("composer", "")
+        raw = meta.get("title") or self.slug
         head = raw.split("|")[0].strip()
         title, _, composer = head.partition(" - ")
         return title.strip(), composer.strip()

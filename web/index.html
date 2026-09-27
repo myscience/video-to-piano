@@ -10,7 +10,9 @@
   <header class="bar">
     <div class="group song">
       <select id="song" aria-label="Song"></select>
+      <button id="addSong" title="Add a song from YouTube or a file">＋ Add</button>
       <span id="credits" class="muted"></span>
+      <span id="jobStatus" class="muted job"></span>
     </div>
     <div class="group transport">
       <button id="restart" title="Back to the start (Home)" aria-label="Back to the start">⏮</button>
@@ -36,14 +38,75 @@
       </span>
       <span class="segmented" role="group" aria-label="View">
         <button id="modePages" class="on" title="Pages that follow the music">Pages</button>
-        <button id="modeLine" title="One endless line streaming right to left">Line</button>
+        <button id="modeLine" title="One endless line streaming right to left (V)">Line</button>
       </span>
       <label class="toggle"><input type="checkbox" id="follow" checked> Follow</label>
+      <button id="editToggle" title="Correct the score: pitch, hand, length, timing (E)">✎ Edit</button>
       <a id="pdf" target="_blank" rel="noopener">PDF</a>
     </div>
   </header>
+
   <main id="score" aria-label="Score"><p class="muted empty">Loading…</p></main>
   <audio id="audio" preload="auto"></audio>
+
+  <aside id="editor" class="editor" hidden aria-label="Correct the score">
+    <div class="ed-row">
+      <strong id="edNote">Click a note to select it</strong>
+      <span id="edBusy" class="muted"></span>
+    </div>
+    <div class="ed-row ed-tools">
+      <span class="ed-group"><span class="muted">Pitch</span>
+        <button data-op="pitch" data-delta="1" title="Up a semitone (↑, ⇧↑ an octave)">▲</button>
+        <button data-op="pitch" data-delta="-1" title="Down a semitone (↓, ⇧↓ an octave)">▼</button></span>
+      <span class="ed-group"><span class="muted">Hand</span>
+        <button data-op="hand" data-hand="L" title="Left hand (L)">L</button>
+        <button data-op="hand" data-hand="R" title="Right hand (R)">R</button></span>
+      <span class="ed-group"><span class="muted">Length</span>
+        <button data-op="length" data-delta="-3" title="A 16th shorter (−)">−</button>
+        <button data-op="length" data-delta="3" title="A 16th longer (+)">+</button></span>
+      <span class="ed-group"><span class="muted">Move</span>
+        <button data-op="move" data-delta="-3" title="A 16th earlier (←)">◀</button>
+        <button data-op="move" data-delta="3" title="A 16th later (→)">▶</button></span>
+      <button data-op="add" title="Add a note a tone above, then adjust it (N)">＋ Note</button>
+      <button data-op="delete" class="danger" title="Delete the note (⌫)">Delete</button>
+    </div>
+    <div class="ed-row ed-status">
+      <span id="edCount" class="muted"></span>
+      <span class="spacer"></span>
+      <button id="edUndo" title="Undo the last change (⌘Z)">Undo</button>
+      <button id="edDiscard" title="Throw away unsaved changes">Discard</button>
+      <button id="edSave" class="primary" title="Keep the changes: rebuild the score and PDF (⌘S)">Save</button>
+      <button id="edRevert" title="Remove every saved correction">Revert all</button>
+    </div>
+  </aside>
+
+  <dialog id="addDialog" aria-label="Add a song">
+    <div class="add">
+      <h2>Add a song</h2>
+      <div class="add-search">
+        <input id="addQuery" type="search" placeholder="Search YouTube, or paste a link" autocomplete="off">
+        <button id="addGo" type="button" class="primary">Search</button>
+      </div>
+      <ul id="addResults" class="results"></ul>
+      <label class="upload muted">…or use a file on this computer:
+        <input id="addFile" type="file" accept="audio/*,video/*"></label>
+      <div id="addDetails" class="details" hidden>
+        <div id="addChosen" class="chosen"></div>
+        <div class="credits-form">
+          <label>Title <input id="addTitle" autocomplete="off"></label>
+          <button id="addSwap" type="button" title="Swap title and composer">⇅</button>
+          <label>Composer <input id="addComposer" autocomplete="off"></label>
+        </div>
+        <button id="addStart" type="button" class="primary">Transcribe</button>
+      </div>
+      <div id="addProgress" class="progress" hidden>
+        <ol id="addSteps" class="steps"></ol>
+        <p id="addMsg" class="muted"></p>
+      </div>
+      <div class="add-foot"><button id="addClose" type="button">Close</button></div>
+    </div>
+  </dialog>
+
   <script type="module" src="app.js"></script>
 </body>
 </html>

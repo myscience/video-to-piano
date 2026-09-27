@@ -69,45 +69,25 @@ def cmd_beats(args: argparse.Namespace) -> None:
 
 
 def cmd_score(args: argparse.Namespace) -> None:
-    from .notation.hands import decode_hands
-    from .notation.score import build_score, song_span, write_musicxml
-    from .render.lilypond import musicxml_to_pdf
-    from .rhythm.beats import BeatGrid
-    from .rhythm.quantize import quantize, quantize_pedal
-    from .transcribe import Transcription
+    from . import pipeline
 
     song = Song.get(args.song)
-    grid = BeatGrid.load(song.beats)
-    t = Transcription.load(song.notes(args.notes))
-    start, end = song_span(t)
-    t = Transcription([n for n in t.notes if start <= n.onset <= end], t.pedal)
-    print(f"  song span {start:.1f}s .. {end:.1f}s (jingles and silences trimmed)")
-    q = quantize(t, grid)
-    title, composer = song.credits()
-    score = build_score(q, decode_hands(q), grid.beats_per_bar, grid.tempo, args.title or title,
-                        args.composer or composer, pedal=quantize_pedal(t, grid), voices=not args.one_voice)
-    write_musicxml(score, song.score)
-    k = score.recurse().getElementsByClass("Key").first()
-    voiced = getattr(score, "voiced_bars", {})
-    print(f"✓ {len(q)} notes, key {k.name if k else '?'}, two-voice bars: right {voiced.get('R', 0)}, "
-          f"left {voiced.get('L', 0)} -> {song.score}")
-    pdf = musicxml_to_pdf(song.score, song.pdf, png=args.png)
-    print(f"✓ engraved -> {pdf}")
+    b = pipeline.build(song, notes_name=args.notes, png=args.png, voices=not args.one_voice,
+                       title=args.title, composer=args.composer)
+    print(f"  song span {b.span[0]:.1f}s .. {b.span[1]:.1f}s (jingles and silences trimmed)")
+    print(f"✓ {b.notes} notes, key {b.key}, two-voice bars: right {b.voiced.get('R', 0)}, "
+          f"left {b.voiced.get('L', 0)}, {b.pages} viewer pages in {b.seconds:.0f}s -> {song.pdf}")
+    if b.skipped_edits:
+        print(f"  ⚠ {len(b.skipped_edits)} saved edits no longer match a note (see {song.edits})")
 
-    # Viewer: score position (quarters from bar 1) = beat position + shift_beats, and beat
-    # positions map to audio time through the tracked beats.
-    import json
 
-    from .render.verovio import render_view
+def cmd_add(args: argparse.Namespace) -> None:
+    from . import pipeline
 
-    pages = render_view(song.score, song.view_dir)
-    first_downbeat = int(np.searchsorted(grid.beats, grid.downbeats[0]))
-    (song.view_dir / "sync.json").write_text(json.dumps({
-        "beats": [round(float(b), 4) for b in grid.beats], "first_downbeat": first_downbeat,
-        "shift_beats": score.shift_beats, "beats_per_bar": grid.beats_per_bar, "bpm": round(grid.tempo, 2),
-        "pages": pages, "title": args.title or title, "composer": args.composer or composer,
-    }))
-    print(f"✓ viewer: {pages} pages -> {song.view_dir}")
+    t0 = time.perf_counter()
+    song = pipeline.add_song(args.source, args.slug, args.title, args.composer, args.device,
+                             progress=lambda step, msg: print(f"  [{step}] {msg}"))
+    print(f"✓ {song.slug} ready in {time.perf_counter() - t0:.0f}s -> {song.pdf}  (pianoscribe serve to practice)")
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
@@ -260,12 +240,20 @@ def main() -> None:
 
     p = sub.add_parser("score", help="Notes + beats -> <song>.pdf (MusicXML in score/)")
     p.add_argument("song")
-    p.add_argument("--notes", default="ensemble", help="Which notes/<name>.mid to engrave")
+    p.add_argument("--notes", help="Which notes/<name>.mid to engrave (default: ensemble if present)")
     p.add_argument("--title")
     p.add_argument("--composer")
     p.add_argument("--png", action="store_true", help="Also write PNG previews of each page")
     p.add_argument("--one-voice", action="store_true", help="One voice of chords per hand (no melody/bass split)")
     p.set_defaults(func=cmd_score)
+
+    p = sub.add_parser("add", help="Everything at once: URL or file -> transcription -> beats -> score")
+    p.add_argument("source", help="A YouTube (or other yt-dlp) URL, or a local audio/video file")
+    p.add_argument("--slug", help="Library folder name (default: from the title)")
+    p.add_argument("--title")
+    p.add_argument("--composer")
+    p.add_argument("--device", default="auto", help="auto | cpu | mps | cuda")
+    p.set_defaults(func=cmd_add)
 
     p = sub.add_parser("serve", help="Practice viewer: score with a cursor following the recording")
     p.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to reach it from other devices (iPad)")

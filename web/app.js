@@ -1,13 +1,19 @@
 // pianoscribe practice viewer: the score, with the notes lighting up as the original recording plays.
 //
 // Positions: the recording's time <-> beats (the tracked beat grid, so rubato is followed) <->
-// score position q, in quarter notes from the start of bar 1 (Verovio's timemap).
+// score position q, in quarter notes from the start of bar 1 (Verovio's timemap) <-> ticks, the
+// pipeline's grid (12 per beat, 0 = first downbeat), which is how edits name notes.
 
 const $ = (id) => document.getElementById(id);
 const audio = $("audio");
 const LEAD_IN = 1.0; // seconds of recording before bar 1 when starting from the top
+const TICKS = 12; // per beat
+const STEP = 3; // a 16th
 
 let S = null; // the loaded song
+let mode = "pages";
+let editing = false;
+try { mode = localStorage.getItem("pianoscribe.mode") === "line" ? "line" : "pages"; } catch {}
 
 // ---- time mapping --------------------------------------------------------------------------
 
@@ -35,57 +41,71 @@ function timeAt(beat) {
 
 const qAt = (t) => beatAt(t) + S.sync.shift_beats; // recording time -> score position
 const tAt = (q) => timeAt(q - S.sync.shift_beats); // score position -> recording time
+const tickOf = (q) => Math.round((q - S.sync.shift_beats) * TICKS); // score position -> pipeline tick
 const barOf = (q) => Math.floor(q / S.sync.beats_per_bar);
 
 // ---- loading -------------------------------------------------------------------------------
 
-async function loadSongs() {
+async function loadSongs(select = null) {
   const songs = await (await fetch("/api/songs")).json();
-  const select = $("song");
-  select.innerHTML = songs.map((s) => `<option value="${s.slug}">${s.title}</option>`).join("");
+  const picker = $("song");
+  picker.innerHTML = songs.map((s) => `<option value="${s.slug}">${esc(s.title)}</option>`).join("");
   if (!songs.length) {
-    $("score").innerHTML = '<p class="muted empty">No songs yet: run <code>pianoscribe score &lt;song&gt;</code>.</p>';
+    $("score").innerHTML = '<p class="muted empty">No songs yet: press <b>＋ Add</b> to transcribe one.</p>';
     return;
   }
-  const wanted = decodeURIComponent(location.hash.slice(1));
-  select.value = songs.some((s) => s.slug === wanted) ? wanted : songs[0].slug;
-  await loadSong(select.value);
+  const wanted = select ?? decodeURIComponent(location.hash.slice(1));
+  picker.value = songs.some((s) => s.slug === wanted) ? wanted : songs[0].slug;
+  await loadSong(picker.value);
+}
+
+async function fetchView(slug) {
+  // The saved state of a song's viewer files (cache-busted: they change when edits are saved).
+  const base = `/api/songs/${encodeURIComponent(slug)}/view/`;
+  const v = `?v=${Date.now()}`;
+  const [sync, notes] = await Promise.all([
+    fetch(base + "sync.json" + v).then((r) => r.json()),
+    fetch(base + "notes.json" + v).then((r) => r.json()),
+  ]);
+  const pages = await Promise.all(
+    Array.from({ length: sync.pages }, (_, i) => fetch(`${base}page-${i + 1}.svg${v}`).then((r) => r.text())),
+  );
+  return { base, sync, notes, pages };
 }
 
 async function loadSong(slug) {
   audio.pause();
-  const base = `/api/songs/${encodeURIComponent(slug)}/view/`;
-  const [sync, notes] = await Promise.all([
-    fetch(base + "sync.json").then((r) => r.json()),
-    fetch(base + "notes.json").then((r) => r.json()),
-  ]);
-  const pages = await Promise.all(
-    Array.from({ length: sync.pages }, (_, i) => fetch(`${base}page-${i + 1}.svg`).then((r) => r.text())),
-  );
-  S = { slug, base, sync, notes, svg: { pages, line: null }, spans: [], byId: new Map(), active: new Set(),
-        loop: { a: null, b: null }, system: null, anchors: null, lastQ: null };
-
-  $("credits").textContent = sync.composer || "";
+  const view = await fetchView(slug);
+  const saved = (await (await fetch(`/api/songs/${encodeURIComponent(slug)}/edits`)).json()).saved.length;
+  S = { slug, base: view.base, sync: view.sync, notes: view.notes, svg: { pages: view.pages, line: null },
+        spans: [], byId: new Map(), active: new Set(), loop: { a: null, b: null }, system: null,
+        anchors: null, lastQ: null, pending: [], history: [], sel: null, saved, previewSeq: 0 };
+  $("credits").textContent = S.sync.composer || "";
   $("pdf").href = `/api/songs/${encodeURIComponent(slug)}/pdf`;
-  document.title = `${sync.title || slug} · pianoscribe`;
+  document.title = `${S.sync.title || slug} · pianoscribe`;
   history.replaceState(null, "", `#${encodeURIComponent(slug)}`);
   showLoop();
   await render();
+  updateEditor();
   audio.src = `/api/songs/${encodeURIComponent(slug)}/audio`;
   audio.addEventListener("loadedmetadata", () => { audio.currentTime = Math.max(0, tAt(0) - LEAD_IN); },
                          { once: true });
 }
 
-// ---- views ---------------------------------------------------------------------------------
+async function reloadSaved() {
+  // Back to the saved score (after saving or discarding), keeping the place and the view.
+  const view = await fetchView(S.slug);
+  Object.assign(S, { sync: view.sync, notes: view.notes, svg: { pages: view.pages, line: null } });
+  await keepingPlace(render);
+}
 
-let mode = "pages";
-try { mode = localStorage.getItem("pianoscribe.mode") === "line" ? "line" : "pages"; } catch {}
+// ---- views ---------------------------------------------------------------------------------
 
 async function render() {
   // Draw the score in the current view mode and (re)bind the notes to their SVG elements.
   const main = $("score");
   if (mode === "line") {
-    S.svg.line ??= await fetch(S.base + "line.svg").then((r) => r.text());
+    S.svg.line ??= await fetch(S.base + "line.svg?v=" + Date.now()).then((r) => r.text());
     main.className = "line";
     main.innerHTML = `<div class="stripwrap"><div class="strip" id="strip"><div class="strip-inner">` +
                      `<div class="pad"></div>${S.svg.line}<div class="pad"></div></div></div>` +
@@ -95,7 +115,7 @@ async function render() {
     main.innerHTML = S.svg.pages.map((svg) => `<div class="page">${svg}</div>`).join("");
   }
   S.spans = Object.entries(S.notes)
-    .map(([id, [on, off]]) => ({ id, on, off: Math.max(off, on + 0.05), el: document.getElementById(id) }))
+    .map(([id, [on, off, pitch]]) => ({ id, on, off: Math.max(off, on + 0.05), pitch, el: document.getElementById(id) }))
     .filter((n) => n.el)
     .sort((a, b) => a.on - b.on);
   S.byId = new Map(S.spans.map((n) => [n.id, n]));
@@ -105,13 +125,24 @@ async function render() {
   S.anchors = mode === "line" ? lineAnchors() : null;
   $("modePages").classList.toggle("on", mode === "pages");
   $("modeLine").classList.toggle("on", mode === "line");
+  if (S.sel) reselect();
 }
 
-function setMode(m) {
+async function keepingPlace(fn) {
+  // Re-render without losing the reader's place on screen.
+  const strip = $("strip");
+  const x = strip?.scrollLeft, y = window.scrollY;
+  await fn();
+  if (mode === "line" && $("strip") && x != null) $("strip").scrollLeft = x;
+  else window.scrollTo(0, y);
+}
+
+async function setMode(m) {
   if (m === mode || !S) return;
   mode = m;
   try { localStorage.setItem("pianoscribe.mode", m); } catch {}
-  render();
+  if (m === "line" && S.pending.length) { S.svg.line = null; await runPreview(); } // saved line.svg lacks them
+  else await render();
 }
 
 function lineAnchors() {
@@ -131,8 +162,8 @@ function lineAnchors() {
 }
 
 function xAt(q) {
-  // Strip position (px) of score position q, interpolated between the surrounding notes.
   const A = S.anchors;
+  if (!A?.length) return 0;
   if (q <= A[0][0]) return A[0][1];
   if (q >= A[A.length - 1][0]) return A[A.length - 1][1];
   let lo = 0, hi = A.length - 1;
@@ -174,7 +205,7 @@ function follow(q) {
   if (mode === "line") {
     // Glide continuously: the playing position always sits under the playhead.
     const strip = $("strip");
-    strip.scrollLeft = xAt(q) - strip.clientWidth / 2;
+    if (strip) strip.scrollLeft = xAt(q) - strip.clientWidth / 2;
     return;
   }
   // Pages: when the music reaches another system, bring that system to the middle of the screen
@@ -187,6 +218,257 @@ function follow(q) {
   const r = system.getBoundingClientRect();
   const middle = header + (window.innerHeight - header) / 2;
   window.scrollBy({ top: (r.top + r.bottom) / 2 - middle, behavior: "smooth" });
+}
+
+// ---- correcting the score ------------------------------------------------------------------
+
+const FLATS = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
+const SHARPS = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+const noteName = (p) => ((S.sync.key_sharps ?? -1) < 0 ? FLATS : SHARPS)[p % 12] + (Math.floor(p / 12) - 1);
+
+function handOf(span) {
+  // Staff 1 (top) is the right hand, staff 2 the left.
+  const staff = span.el.closest("g.staff");
+  const staves = staff ? [...staff.parentNode.querySelectorAll(":scope > g.staff")] : [];
+  return staves.indexOf(staff) === 1 ? "L" : "R";
+}
+
+function select(span) {
+  for (const el of document.querySelectorAll("g.note.selected")) el.classList.remove("selected");
+  if (!span) { S.sel = null; updateEditor(); return; }
+  span.el.classList.add("selected");
+  S.sel = { pitch: span.pitch, tick: tickOf(span.on), start: tickOf(span.on), end: tickOf(span.off),
+            hand: handOf(span), q: span.on };
+  updateEditor();
+}
+
+function reselect() {
+  // After a re-render, find the selected note again by what it is (pitch sounding at tick).
+  const { pitch, tick } = S.sel;
+  const hits = S.spans.filter((n) => n.pitch === pitch && tickOf(n.on) <= tick && tick < Math.max(tickOf(n.off), tickOf(n.on) + 1));
+  const span = hits.find((n) => tickOf(n.on) === tick) ?? hits[0];
+  if (span) select(span); else { S.sel = null; updateEditor(); }
+}
+
+function edit(op, opts = {}) {
+  if (!S?.sel) return;
+  const sel = S.sel;
+  const target = { pitch: sel.pitch, tick: sel.tick };
+  let e, next = { ...sel };
+  if (op === "pitch") { e = { op, target, delta: opts.delta }; next.pitch = Math.min(108, Math.max(21, sel.pitch + opts.delta)); }
+  else if (op === "hand") { if (opts.hand === sel.hand) return; e = { op, target, hand: opts.hand }; next.hand = opts.hand; }
+  else if (op === "length") e = { op, target, delta: opts.delta };
+  else if (op === "move") { e = { op, target, delta: opts.delta }; next.tick += opts.delta; }
+  else if (op === "delete") { e = { op, target }; next = null; }
+  else if (op === "add") {
+    const pitch = Math.min(108, sel.pitch + 2);
+    e = { op, pitch, start: sel.start, end: Math.max(sel.end, sel.start + STEP), hand: sel.hand };
+    next = { ...sel, pitch, tick: sel.start };
+  }
+  S.pending.push(e);
+  S.history.push(sel);
+  const el = document.querySelector("g.note.selected");
+  if (el) el.classList.add("pending"); // instant feedback until the re-engraved preview arrives
+  S.sel = next;
+  updateEditor();
+  schedulePreview();
+}
+
+let previewTimer = null;
+function schedulePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(runPreview, 250);
+}
+
+async function runPreview() {
+  const seq = ++S.previewSeq;
+  busy("Updating preview…");
+  try {
+    const r = await fetch(`/api/songs/${encodeURIComponent(S.slug)}/preview`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pending: S.pending, line: mode === "line" }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const v = await r.json();
+    if (seq !== S.previewSeq) return; // a newer edit is already on its way
+    Object.assign(S, { sync: v.sync, notes: v.notes, svg: { pages: v.pages, line: v.line } });
+    await keepingPlace(render);
+    busy(v.skipped?.length ? `${v.skipped.length} change(s) no longer match a note` : "");
+  } catch (err) {
+    if (seq === S.previewSeq) busy(`Preview failed: ${err.message.slice(0, 120)}`);
+  }
+}
+
+async function saveEdits() {
+  if (!S?.pending.length) return;
+  busy("Saving… rebuilding the score and PDF");
+  const r = await fetch(`/api/songs/${encodeURIComponent(S.slug)}/edits`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pending: S.pending }),
+  });
+  if (!r.ok) { busy("Saving failed"); return; }
+  const res = await r.json();
+  S.pending = []; S.history = []; S.saved = res.saved;
+  await reloadSaved();
+  updateEditor();
+  busy(`Saved · rebuilt in ${res.seconds}s`);
+}
+
+async function discardEdits() {
+  if (!S?.pending.length) return;
+  S.pending = []; S.history = [];
+  await reloadSaved();
+  updateEditor();
+  busy("");
+}
+
+async function undoEdit() {
+  if (!S?.pending.length) return;
+  S.pending.pop();
+  S.sel = S.history.pop() ?? S.sel;
+  updateEditor();
+  if (S.pending.length) schedulePreview(); else { await reloadSaved(); busy(""); }
+}
+
+async function revertAll() {
+  if (!S?.saved || !confirm(`Remove all ${S.saved} saved corrections to this score?`)) return;
+  busy("Reverting… rebuilding the score and PDF");
+  await fetch(`/api/songs/${encodeURIComponent(S.slug)}/edits`, { method: "DELETE" });
+  S.pending = []; S.history = []; S.saved = 0;
+  await reloadSaved();
+  updateEditor();
+  busy("All corrections removed");
+}
+
+function busy(text) { $("edBusy").textContent = text; }
+
+function updateEditor() {
+  $("editor").hidden = !editing;
+  document.body.classList.toggle("editing", editing);
+  $("editToggle").classList.toggle("on", editing);
+  if (S?.pending.length) $("editToggle").dataset.pending = S.pending.length;
+  else delete $("editToggle").dataset.pending;
+  if (!S) return;
+  const sel = S.sel;
+  const bpb = S.sync.beats_per_bar;
+  $("edNote").textContent = sel
+    ? `${noteName(sel.pitch)} · ${sel.hand === "L" ? "left" : "right"} hand · bar ${Math.floor(sel.q / bpb) + 1}, beat ${Math.floor((sel.q % bpb) * 4) / 4 + 1}`
+    : "Click a note to select it";
+  for (const b of document.querySelectorAll(".ed-tools button")) b.disabled = !sel;
+  for (const b of document.querySelectorAll('.ed-tools [data-op="hand"]')) b.classList.toggle("on", !!sel && b.dataset.hand === sel.hand);
+  const p = S.pending.length;
+  $("edCount").textContent = (p ? `${p} unsaved change${p > 1 ? "s" : ""} (preview)` : "No unsaved changes") +
+                             (S.saved ? ` · ${S.saved} saved` : "");
+  $("edUndo").disabled = $("edDiscard").disabled = $("edSave").disabled = !p;
+  $("edRevert").disabled = !S.saved;
+}
+
+function toggleEditing() {
+  editing = !editing;
+  if (!editing && S) select(null);
+  updateEditor();
+}
+
+// ---- adding a song -------------------------------------------------------------------------
+
+const STEPS = [["fetch", "Download"], ["transcribe", "Listen for notes"], ["beats", "Find the beat"],
+               ["score", "Write the score"], ["done", "Ready"]];
+let addChoice = null; // {url, title} or {file}
+let jobPoll = null;
+
+function openAdd() {
+  addChoice = null;
+  $("addResults").innerHTML = "";
+  $("addDetails").hidden = true;
+  $("addProgress").hidden = true;
+  $("addFile").value = "";
+  $("addDialog").showModal();
+  $("addQuery").focus();
+}
+
+function guessCredits(raw) {
+  // "Artist - Song | Piano cover" -> {title: Song, composer: Artist}; ⇅ fixes the other order.
+  const head = (raw || "").split(/[|(\[]/)[0].trim();
+  const parts = head.split(/\s+[-–—]\s+/);
+  return parts.length >= 2 ? { title: parts.slice(1).join(" - "), composer: parts[0] } : { title: head, composer: "" };
+}
+
+async function searchAdd() {
+  const q = $("addQuery").value.trim();
+  if (!q) return;
+  if (/^https?:\/\//.test(q)) {
+    $("addResults").innerHTML = '<li class="m">Looking up the link…</li>';
+    const info = await (await fetch(`/api/probe?url=${encodeURIComponent(q)}`)).json();
+    $("addResults").innerHTML = "";
+    chooseAdd({ url: info.url || q, title: info.title, channel: info.channel });
+    return;
+  }
+  $("addResults").innerHTML = '<li class="m">Searching…</li>';
+  const results = await (await fetch(`/api/search?q=${encodeURIComponent(q)}`)).json();
+  $("addResults").innerHTML = results.map((r, i) =>
+    `<li data-i="${i}"><img src="${esc(r.thumbnail)}" alt="" loading="lazy">` +
+    `<div><div class="t">${esc(r.title)}</div><div class="m">${esc(r.channel || "")} · ${clock(r.duration || 0)}</div></div></li>`,
+  ).join("") || '<li class="m">No results</li>';
+  for (const li of $("addResults").querySelectorAll("li[data-i]")) {
+    li.addEventListener("click", () => {
+      for (const x of $("addResults").children) x.classList.remove("on");
+      li.classList.add("on");
+      chooseAdd(results[Number(li.dataset.i)]);
+    });
+  }
+}
+
+function chooseAdd(choice) {
+  addChoice = choice;
+  const g = guessCredits(choice.title || choice.file?.name?.replace(/\.[^.]+$/, ""));
+  $("addChosen").textContent = choice.title || choice.file?.name || "";
+  $("addTitle").value = g.title;
+  $("addComposer").value = g.composer;
+  $("addDetails").hidden = false;
+  $("addTitle").focus();
+}
+
+async function startAdd() {
+  if (!addChoice) return;
+  const title = $("addTitle").value.trim(), composer = $("addComposer").value.trim();
+  let r;
+  if (addChoice.file) {
+    const form = new FormData();
+    form.append("file", addChoice.file);
+    form.append("title", title);
+    form.append("composer", composer);
+    r = await fetch("/api/upload", { method: "POST", body: form });
+  } else {
+    r = await fetch("/api/add", { method: "POST", headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ source: addChoice.url, title, composer }) });
+  }
+  if (!r.ok) { $("addMsg").textContent = `Could not start: ${await r.text()}`; $("addProgress").hidden = false; return; }
+  const job = await r.json();
+  $("addDetails").hidden = true;
+  $("addProgress").hidden = false;
+  watchJob(job.id, title || addChoice.title || "song");
+}
+
+function watchJob(id, label) {
+  clearInterval(jobPoll);
+  const tick = async () => {
+    const job = await (await fetch(`/api/jobs/${id}`)).json();
+    const at = STEPS.findIndex(([k]) => k === job.step);
+    $("addSteps").innerHTML = STEPS.map(([, name], i) =>
+      `<li class="${job.status === "done" || i < at ? "done" : i === at ? "now" : ""}">${name}</li>`).join("");
+    $("addMsg").textContent = job.status === "error" ? `Something went wrong: ${job.error}` :
+                              job.status === "queued" ? "Waiting for the previous song to finish…" : `${job.message}…`;
+    $("jobStatus").textContent = job.status === "running" || job.status === "queued" ? `♪ ${label}: ${job.message}` :
+                                 job.status === "done" ? `✓ ${label} is ready` : job.status === "error" ? `✕ ${label} failed` : "";
+    if (job.status === "done") {
+      clearInterval(jobPoll);
+      $("addMsg").textContent = "Ready!";
+      await loadSongs(job.result);
+      setTimeout(() => { if ($("addDialog").open) $("addDialog").close(); }, 900);
+    } else if (job.status === "error") clearInterval(jobPoll);
+  };
+  tick();
+  jobPoll = setInterval(tick, 1500);
 }
 
 // ---- controls ------------------------------------------------------------------------------
@@ -226,17 +508,40 @@ function clock(t) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
 $("play").addEventListener("click", togglePlay);
 $("restart").addEventListener("click", () => { if (S) audio.currentTime = Math.max(0, tAt(0) - LEAD_IN); });
 $("speed").addEventListener("change", (e) => { audio.playbackRate = Number(e.target.value); audio.preservesPitch = true; });
 $("loopA").addEventListener("click", () => setLoop("a"));
 $("loopB").addEventListener("click", () => setLoop("b"));
 $("loopClear").addEventListener("click", clearLoop);
-$("song").addEventListener("change", (e) => loadSong(e.target.value));
+$("song").addEventListener("change", async (e) => {
+  if (S?.pending.length && !confirm("Leave this song? Its unsaved changes will be lost.")) { e.target.value = S.slug; return; }
+  await loadSong(e.target.value);
+});
 $("follow").addEventListener("change", () => { if (S) { S.system = null; S.lastQ = null; } });
 $("modePages").addEventListener("click", () => setMode("pages"));
 $("modeLine").addEventListener("click", () => setMode("line"));
+$("editToggle").addEventListener("click", toggleEditing);
+$("addSong").addEventListener("click", openAdd);
+$("addGo").addEventListener("click", searchAdd);
+$("addQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); searchAdd(); } });
+$("addFile").addEventListener("change", (e) => { if (e.target.files[0]) chooseAdd({ file: e.target.files[0] }); });
+$("addSwap").addEventListener("click", () => { const t = $("addTitle").value; $("addTitle").value = $("addComposer").value; $("addComposer").value = t; });
+$("addStart").addEventListener("click", startAdd);
+$("addClose").addEventListener("click", () => $("addDialog").close());
+$("edUndo").addEventListener("click", undoEdit);
+$("edDiscard").addEventListener("click", discardEdits);
+$("edSave").addEventListener("click", saveEdits);
+$("edRevert").addEventListener("click", revertAll);
+for (const b of document.querySelectorAll(".ed-tools button")) {
+  b.addEventListener("click", () => edit(b.dataset.op, { delta: Number(b.dataset.delta), hand: b.dataset.hand }));
+}
 window.addEventListener("resize", () => { if (S && mode === "line") { S.anchors = lineAnchors(); S.lastQ = null; } });
+window.addEventListener("beforeunload", (e) => { if (S?.pending.length) e.preventDefault(); });
 audio.addEventListener("play", () => { $("play").textContent = "⏸"; $("play").setAttribute("aria-label", "Pause"); });
 audio.addEventListener("pause", () => { $("play").textContent = "▶"; $("play").setAttribute("aria-label", "Play"); });
 audio.addEventListener("ratechange", () => { audio.preservesPitch = true; });
@@ -244,15 +549,28 @@ audio.addEventListener("ratechange", () => { audio.preservesPitch = true; });
 $("score").addEventListener("click", (e) => {
   const g = e.target.closest("g.note");
   const n = g && S?.byId.get(g.id);
-  if (n) audio.currentTime = tAt(n.on);
+  if (!n) return;
+  if (editing) select(n); else audio.currentTime = tAt(n.on);
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.target.matches("select, input")) return;
+  if ((e.target instanceof Element && e.target.matches("select, input, textarea")) || $("addDialog").open) return;
+  const mod = e.metaKey || e.ctrlKey;
+  if (editing && mod && e.key.toLowerCase() === "z") { e.preventDefault(); undoEdit(); return; }
+  if (editing && mod && e.key.toLowerCase() === "s") { e.preventDefault(); saveEdits(); return; }
+  if (mod) return;
+  const editKeys = editing && S?.sel ? {
+    ArrowUp: () => edit("pitch", { delta: e.shiftKey ? 12 : 1 }), ArrowDown: () => edit("pitch", { delta: e.shiftKey ? -12 : -1 }),
+    ArrowLeft: () => edit("move", { delta: -STEP }), ArrowRight: () => edit("move", { delta: STEP }),
+    l: () => edit("hand", { hand: "L" }), r: () => edit("hand", { hand: "R" }),
+    "+": () => edit("length", { delta: STEP }), "=": () => edit("length", { delta: STEP }), "-": () => edit("length", { delta: -STEP }),
+    Backspace: () => edit("delete"), Delete: () => edit("delete"), n: () => edit("add"), Escape: () => select(null),
+  } : {};
   const actions = {
     " ": togglePlay, ArrowLeft: () => seekBar(-1), ArrowRight: () => seekBar(1),
     Home: () => $("restart").click(), "[": () => setLoop("a"), "]": () => setLoop("b"), Escape: clearLoop,
-    v: () => setMode(mode === "line" ? "pages" : "line"),
+    v: () => setMode(mode === "line" ? "pages" : "line"), e: toggleEditing,
+    ...editKeys,
   };
   if (actions[e.key]) { e.preventDefault(); actions[e.key](); }
 });
