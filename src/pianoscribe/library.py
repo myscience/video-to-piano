@@ -7,7 +7,7 @@ can be re-run in isolation and every intermediate can be inspected.
       notes/         <backend>.mid: transcriptions (transkun, bytedance, ensemble, ...)
       rhythm/        activations.npz, beats.json
       truth/         notes.mid, bars.json: answer key read from a Synthesia video (evaluation)
-      score/         score.musicxml, score.ly, score-page<N>.png
+      score/         score.musicxml, score.ly, score-page<N>.png; view/ (viewer SVGs + timing)
       eval/          roll.png
 """
 
@@ -91,6 +91,19 @@ class Song:
     def score(self) -> Path:
         """The score as MusicXML; LilyPond's .ly and page PNGs go next to it."""
         return self._in("score", "score.musicxml")
+
+    @property
+    def view_dir(self) -> Path:
+        """Viewer files: SVG pages, notes.json (note timemap), sync.json (score <-> audio time)."""
+        d = self._in("score", "view")
+        d.mkdir(exist_ok=True)
+        return d
+
+    @property
+    def playback_audio(self) -> Path | None:
+        """The best audio to play: the downloaded original if any, else the analysis WAV."""
+        originals = sorted((self.root / "source").glob("original.*"))
+        return originals[0] if originals else (self.audio if self.audio.exists() else None)
 
     @property
     def pdf(self) -> Path:

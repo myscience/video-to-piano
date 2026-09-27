@@ -1,0 +1,116 @@
+:root {
+  --bg: #f4f3ef;
+  --panel: #fcfcfb;
+  --ink: #1d1d1b;
+  --muted: #6b6a66;
+  --line: #dddbd4;
+  --accent: mediumorchid;
+  --hl: mediumorchid;
+  --paper: #ffffff;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615;
+    --panel: #1f1f1d;
+    --ink: #ecebe6;
+    --muted: #a3a29b;
+    --line: #34332f;
+    --accent: #cf7ce6;
+    --hl: mediumorchid; /* notes are highlighted on the paper, which stays light */
+    --paper: #fbfaf7; /* the score stays on paper: black notes read best on light */
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.group { display: flex; align-items: center; gap: 8px; }
+.song { flex: 1 1 260px; min-width: 0; }
+#credits { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.muted { color: var(--muted); }
+.readout { font-variant-numeric: tabular-nums; min-width: 3.2em; }
+
+button, select, a#pdf {
+  font: inherit;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 10px;
+  min-height: 34px;
+  cursor: pointer;
+  text-decoration: none;
+}
+button:hover, select:hover, a#pdf:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; min-width: 44px; }
+button.on { border-color: var(--accent); color: var(--accent); }
+label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.loop { display: flex; align-items: center; gap: 4px; }
+
+main { padding: 16px; }
+.empty { text-align: center; margin-top: 20vh; }
+.page {
+  max-width: 1100px;
+  margin: 0 auto 16px;
+  background: var(--paper);
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  padding: 8px 0;
+}
+.page svg { display: block; width: 100%; height: auto; }
+.page g.note.playing, .strip g.note.playing { fill: var(--hl); stroke: var(--hl); }
+.page g.note, .strip g.note { cursor: pointer; }
+
+.segmented { display: inline-flex; }
+.segmented button { border-radius: 0; }
+.segmented button:first-child { border-radius: 8px 0 0 8px; }
+.segmented button:last-child { border-radius: 0 8px 8px 0; margin-left: -1px; }
+
+/* Line mode: the whole piece as one system, scrolled so the playing position sits under a fixed
+   playhead in the middle of the screen. */
+main.line { display: flex; align-items: center; min-height: calc(100vh - 120px); padding: 16px 0; }
+.stripwrap { position: relative; width: 100%; }
+.strip {
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--paper);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  scrollbar-width: thin;
+}
+.strip-inner { display: flex; width: max-content; }
+.strip .pad { flex: none; width: 50vw; }
+.strip svg { display: block; flex: none; height: min(46vh, 420px); width: auto; }
+.playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  border-left: 2px solid var(--hl);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  .bar { padding: 8px 12px; gap: 8px; }
+  main { padding: 8px 0; }
+  .page { border-radius: 0; }
+}

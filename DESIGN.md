@@ -209,8 +209,50 @@ On 'exile' the hands overlap by more than an octave (left up to F#4, right down 
   right-hand bars begin with a tied note, pop syncopation), it moves back to just before the
   tied note. On 'exile': right hand 1 change (bass for the opening, treble from bar 5), left
   hand none. A switch cost of 4 would add 4 changes to save only 20 ledger lines in the piece.
-- Known limits: held notes under a moving line are cut (voices), note lengths from audio are only
-  84% exact, 2/4 vs 4/4 and 6/8 aren't distinguished, no pickup (anacrusis) bars yet.
+- **Voices by role, not by duration.** Measured first: notes we'd call "held under the next
+  chord" match the arranger's held notes only ~25% of the time (audio can't tell a held key
+  from a late release), so voices can't come from note lengths. Instead each hand splits by
+  *role* from starts and pitches (99.7% and ~96% reliable): right hand = melody (top note of
+  each chord) over accompaniment, left hand = bass (bottom note) under the rest. Each voice runs
+  legato to its own next note, with the gap rule.
+- **Voice notes stay playable.** Legato inside a voice bridges at most one beat of silence, and
+  a held note ends as soon as the same hand plays beyond an octave from it (the hand-split's
+  reach). Before this, left-hand notes were stretched for bars over arpeggios (13 of 13 long
+  upper-voice notes came from stretching, 9 while the hand played out of reach), drawing long
+  tie arcs across other notes.
+- **Two voices only where they're worth it**, per bar: both roles play, their rhythms diverge,
+  and the sustain they show (that one voice would cut) is ≥ 1 beat and ≥ ½ beat per *visible*
+  rest. The secondary voice (right-hand accompaniment, left-hand notes above the bass) hides
+  its rests (`print-object="no"`: spacers in LilyPond and Verovio); melody and bass keep theirs.
+  A note crossing a barline keeps its bars in the same mode.
+- On 'exile': 17 right-hand two-voice bars (melody over held accompaniment), left hand one
+  voice throughout; 6 + 8 visible rests in the whole piece; 4 viewer pages instead of 7.
+  Earlier attempts: any rhythm difference → 67 + 77 bars with whole-bar rests; bass = lowest
+  note *of the beat* (to split arpeggios) → 152 left-hand rests.
+- Known limits: note lengths from audio are only 84% exact, 2/4 vs 4/4 and 6/8 aren't
+  distinguished, no pickup bars.
+
+## The practice viewer
+
+`pianoscribe serve` → <http://localhost:8765> (`--host 0.0.0.0` to open it from an iPad on the
+same Wi-Fi). `pianoscribe score` also writes `score/view/`: SVG pages and a note timemap from
+Verovio (rendered once on the server: no WASM in the browser), plus `sync.json`.
+
+- **Sync:** recording time ↔ beat position (the tracked beats, so the cursor follows the real
+  performance, rubato included) ↔ score position in quarter notes (Verovio's `qstamp`; 0 = bar 1,
+  beat 1, via `shift_beats`). Checked end to end: every score position maps to a heard note,
+  median 6 ms, 99% within 26 ms.
+- **Two views.** *Pages*: when the music reaches another system, it scrolls to the middle of the
+  screen. *Line*: the whole piece as one endless system (`line.svg`, a re-layout of the same
+  Verovio document, so note ids match) gliding right to left under a fixed playhead; the
+  position is interpolated between the notes around the current beat, so it moves smoothly
+  (measured: the playing notes sit within 1 px of the playhead). `v` switches.
+- **Practice:** notes light up (mediumorchid) as they sound, click a note to jump there, loop
+  bars (A/B, `[` `]`), slow down without pitch change (50–100%), ←/→ one bar, Space play/pause.
+- Plain HTML/CSS/JS in `web/` (no build step), FastAPI in `server/`. The audio is the original
+  download (served with Range support, so seeking works).
+- The viewer's engraving is Verovio's and the PDF's is LilyPond's: same notes, slightly
+  different layout.
 
 ### Gotchas found along the way (keep in mind for other videos)
 
@@ -229,17 +271,23 @@ On 'exile' the hands overlap by more than an octave (left up to F#4, right down 
 - music21 writes clef *changes* in a two-staff part as bare `<clef>` elements. MusicXML reads
   that as staff 1, but `musicxml2ly` put a right-hand change on the left-hand staff. The
   exporter now numbers every clef by the staff of the next note after it.
+- Assembling bars by hand skips music21's `makeNotation`, which is also what decides *printed*
+  accidentals: every G♭ carried an explicit flat (2,270 of 2,655 notes) until
+  `part.makeAccidentals()` ran again.
+- music21 numbers voices 1, 2, ... in *both* staves of the joined part, and musicxml2ly groups
+  notes by voice number across the part, merging the hands (barlines vanished, staves drifted).
+  The exporter renumbers: staff 1 voices 1-4, staff 2 voices 5-8, as notation programs do.
 - Intro/outro cards have other layouts. Frames where the red hit line is missing are skipped,
   and only the span the video covers is scored.
 
 ## Roadmap
 
 1. ✅ **Spike:** repo reset, fetch, two backends, video ground truth, eval harness.
-2. **Stage B core:** ✅ beats and bars → ✅ quantization → ✅ hand split → ✅ first score (one voice
-   per hand) → voices (held notes under moving lines), pickup bars.
+2. **Stage B core:** ✅ beats and bars → ✅ quantization → ✅ hand split → ✅ first score → ✅ voices
+   by role → pickup bars, meter beyond 3/4-4/4.
 3. ✅ **Stage C:** MusicXML → PDF via LilyPond (`musicxml2ly`).
-4. **Viewer:** FastAPI + Verovio. The score is synced to the *original audio* through the beat
-   map, so the cursor follows rubato. Loop sections, slow down, hide a hand; open it on an iPad.
+4. ✅ **Viewer:** FastAPI + Verovio, synced to the original audio through the beat map. Next:
+   hide a hand, practice mode with a MIDI keyboard.
 5. **Search + library UI** (`yt-dlp "ytsearch10:<song> piano"`, pick from candidates).
 6. Stretch: Web MIDI practice mode (wait-for-correct-notes), video hand hints, Demucs for
    non-solo recordings.
@@ -255,6 +303,7 @@ uv run pianoscribe transcribe exile --backend all
 uv run pianoscribe merge exile      # transkun onsets + ByteDance note ends -> notes/ensemble.mid
 uv run pianoscribe beats exile      # beats + bars -> beats.json (checkpoint: models/beat_this/final0.ckpt)
 uv run pianoscribe score exile --png  # -> library/exile/exile.pdf (+ MusicXML, page PNGs in score/)
+uv run pianoscribe serve            # practice viewer on http://localhost:8765
 uv run pianoscribe truth exile      # only for Synthesia-style videos: library/exile/source/video.mp4
 uv run pianoscribe eval exile --plot
 ```

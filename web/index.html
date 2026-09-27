@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pianoscribe</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="group song">
+      <select id="song" aria-label="Song"></select>
+      <span id="credits" class="muted"></span>
+    </div>
+    <div class="group transport">
+      <button id="restart" title="Back to the start (Home)" aria-label="Back to the start">⏮</button>
+      <button id="play" class="primary" title="Play / pause (Space)" aria-label="Play">▶</button>
+      <span id="clock" class="readout">0:00</span>
+      <span id="barno" class="readout muted">bar 1</span>
+    </div>
+    <div class="group practice">
+      <label>Speed
+        <select id="speed" aria-label="Speed">
+          <option value="0.5">50%</option>
+          <option value="0.6">60%</option>
+          <option value="0.75">75%</option>
+          <option value="0.9">90%</option>
+          <option value="1" selected>100%</option>
+        </select>
+      </label>
+      <span class="loop">
+        <button id="loopA" title="Loop from the start of this bar ( [ )">A</button>
+        <button id="loopB" title="Loop to the end of this bar ( ] )">B</button>
+        <button id="loopClear" title="Clear the loop (Esc)" aria-label="Clear the loop">✕</button>
+        <span id="looplabel" class="readout muted"></span>
+      </span>
+      <span class="segmented" role="group" aria-label="View">
+        <button id="modePages" class="on" title="Pages that follow the music">Pages</button>
+        <button id="modeLine" title="One endless line streaming right to left">Line</button>
+      </span>
+      <label class="toggle"><input type="checkbox" id="follow" checked> Follow</label>
+      <a id="pdf" target="_blank" rel="noopener">PDF</a>
+    </div>
+  </header>
+  <main id="score" aria-label="Score"><p class="muted empty">Loading…</p></main>
+  <audio id="audio" preload="auto"></audio>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

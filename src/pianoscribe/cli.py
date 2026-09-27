@@ -84,13 +84,37 @@ def cmd_score(args: argparse.Namespace) -> None:
     print(f"  song span {start:.1f}s .. {end:.1f}s (jingles and silences trimmed)")
     q = quantize(t, grid)
     title, composer = song.credits()
-    score = build_score(q, decode_hands(q), grid.beats_per_bar, grid.tempo,
-                        args.title or title, args.composer or composer, pedal=quantize_pedal(t, grid))
+    score = build_score(q, decode_hands(q), grid.beats_per_bar, grid.tempo, args.title or title,
+                        args.composer or composer, pedal=quantize_pedal(t, grid), voices=not args.one_voice)
     write_musicxml(score, song.score)
     k = score.recurse().getElementsByClass("Key").first()
-    print(f"✓ {len(q)} notes, key {k.name if k else '?'} -> {song.score}")
+    voiced = getattr(score, "voiced_bars", {})
+    print(f"✓ {len(q)} notes, key {k.name if k else '?'}, two-voice bars: right {voiced.get('R', 0)}, "
+          f"left {voiced.get('L', 0)} -> {song.score}")
     pdf = musicxml_to_pdf(song.score, song.pdf, png=args.png)
     print(f"✓ engraved -> {pdf}")
+
+    # Viewer: score position (quarters from bar 1) = beat position + shift_beats, and beat
+    # positions map to audio time through the tracked beats.
+    import json
+
+    from .render.verovio import render_view
+
+    pages = render_view(song.score, song.view_dir)
+    first_downbeat = int(np.searchsorted(grid.beats, grid.downbeats[0]))
+    (song.view_dir / "sync.json").write_text(json.dumps({
+        "beats": [round(float(b), 4) for b in grid.beats], "first_downbeat": first_downbeat,
+        "shift_beats": score.shift_beats, "beats_per_bar": grid.beats_per_bar, "bpm": round(grid.tempo, 2),
+        "pages": pages, "title": args.title or title, "composer": args.composer or composer,
+    }))
+    print(f"✓ viewer: {pages} pages -> {song.view_dir}")
+
+
+def cmd_serve(args: argparse.Namespace) -> None:
+    import uvicorn
+
+    print(f"♪ practice viewer on http://{'localhost' if args.host == '127.0.0.1' else args.host}:{args.port}")
+    uvicorn.run("pianoscribe.server.app:app", host=args.host, port=args.port, log_level="warning")
 
 
 def cmd_merge(args: argparse.Namespace) -> None:
@@ -240,7 +264,13 @@ def main() -> None:
     p.add_argument("--title")
     p.add_argument("--composer")
     p.add_argument("--png", action="store_true", help="Also write PNG previews of each page")
+    p.add_argument("--one-voice", action="store_true", help="One voice of chords per hand (no melody/bass split)")
     p.set_defaults(func=cmd_score)
+
+    p = sub.add_parser("serve", help="Practice viewer: score with a cursor following the recording")
+    p.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to reach it from other devices (iPad)")
+    p.add_argument("--port", type=int, default=8765)
+    p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("merge", help="Combine two transcriptions: starts from one, ends from another")
     p.add_argument("song")
