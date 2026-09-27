@@ -12,6 +12,7 @@ dependencies = [
     "soundfile>=0.12",
     "soxr>=0.5",
     "yt-dlp[default,deno]>=2026.8",
+    "beat-this>=1.1",
 ]
 
 [project.optional-dependencies]

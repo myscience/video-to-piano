@@ -101,6 +101,35 @@ reports mir_eval note metrics (onset ±50 ms; "+off" also requires the offset wi
   reload), and it is only used if the note still lasts ≥ 30 ms.
 - The remaining misses are mostly fast repeated chords and very quiet notes.
 
+## Stage B.1: beats and bars
+
+`pianoscribe beats <song>` → `beats.json` (beat + downbeat times; activations cached in
+`activations.npz`).
+
+- **Activations** from Beat This! (Foscarin et al. 2024), 50 frames/s. Checkpoint (~81 MB):
+  `models/beat_this/final0.ckpt` from
+  <https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt>.
+- **Beats:** a dynamic-programming decoder (Ellis 2007) maximizing
+  `Σ activation at beats − tightness · Σ log(interval / period)²`, with the period = median gap of
+  Beat This!'s own beats. The model's peak picking is locally precise (10–25 ms) but has no
+  tempo model: on 'exile' it locked onto off-beats for 30 s, dropped beats in the sparse intro
+  and burst into double time. The DP rules all three out.
+- **Bars:** downbeats are `beats[phase::beats_per_bar]`. Phase = the one with the highest *mean*
+  downbeat activation, and meter (3 vs 4) = the one whose best phase scores highest. The margin
+  over the runner-up phase is printed as a confidence (the usual confusion is the half-bar, beat 3
+  in 4/4).
+- **Answer key:** Synthesia videos draw faint full-width bar lines that scroll with the notes
+  (`truth_bars.json`). They show up as a lift of the *median* brightness across the width, which
+  note bars never cause.
+
+| 'exile' (87 bars, 4/4, 74 BPM) | beat F | downbeat F |
+|---|---|---|
+| Beat This! peak picking | 82.3% | 67.9% (it guessed 2 beats/bar) |
+| DP (tightness 300) + phase | **97.6%** | **97.6%** (every true bar line hit) |
+
+Caveat: 'exile' is a constant-tempo MIDI rendering, so the stiffest tightness always wins there
+(30 → 90%, 100 → 89%, 300 → 98%). Re-check on a rubato recording before trusting the default.
+
 ### Gotchas found along the way (keep in mind for other videos)
 
 - White-key notes are drawn in **pastel** shades (light blue, saturation ~0.28) and black-key
@@ -118,8 +147,8 @@ reports mir_eval note metrics (onset ±50 ms; "+off" also requires the offset wi
 ## Roadmap
 
 1. ✅ **Spike:** repo reset, fetch, two backends, video ground truth, eval harness.
-2. **Stage B core:** beat tracking on audio (`beat_this`) → onset quantization on the beat grid →
-   hand split (scored against the video's hand colors) → `music21` score → MusicXML.
+2. **Stage B core:** ✅ beats and bars → onset quantization on the beat grid → hand split (scored
+   against the video's hand colors) → `music21` score → MusicXML.
 3. **Stage C:** MusicXML → PDF (LilyPond via `musicxml2ly`, or Verovio).
 4. **Viewer:** FastAPI + Verovio. The score is synced to the *original audio* through the beat
    map, so the cursor follows rubato. Loop sections, slow down, hide a hand; open it on an iPad.
@@ -136,6 +165,7 @@ uv sync --extra transkun --extra bytedance
 uv run pianoscribe fetch "https://www.youtube.com/watch?v=UtGNBYegDBc" --song exile
 uv run pianoscribe transcribe exile --backend all
 uv run pianoscribe merge exile      # transkun onsets + ByteDance note ends -> notes/ensemble.mid
+uv run pianoscribe beats exile      # beats + bars -> beats.json (checkpoint: models/beat_this/final0.ckpt)
 uv run pianoscribe truth exile      # only for Synthesia-style videos, needs library/exile/source.mp4
 uv run pianoscribe eval exile --plot
 ```

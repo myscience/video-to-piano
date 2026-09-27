@@ -4,6 +4,8 @@ import argparse
 import time
 from pathlib import Path
 
+import numpy as np
+
 from .library import Song
 
 
@@ -41,6 +43,31 @@ def cmd_transcribe(args: argparse.Namespace) -> None:
               f"({len(audio) / model.sample_rate / elapsed:.1f}x realtime) -> {song.notes(name)}")
 
 
+def cmd_beats(args: argparse.Namespace) -> None:
+    from .rhythm.beats import Activations, beat_activations, peak_picked, track_beats
+    from .sources.audio import load_audio
+
+    song = Song.get(args.song)
+    t0 = time.perf_counter()
+    if song.activations.exists() and not args.recompute:
+        act = Activations.load(song.activations)
+    else:
+        act = beat_activations(load_audio(song.audio, 22_050), 22_050, args.device)
+        act.save(song.activations)
+    if args.method == "peaks":
+        grid, bars = peak_picked(act), None
+    else:
+        grid, bars = track_beats(act, args.meter, args.tightness)
+    grid.save(song.beats)
+    print(f"✓ [{args.method}] {len(grid.beats)} beats, {len(grid.downbeats)} bars, ~{grid.tempo:.1f} BPM, "
+          f"{grid.beats_per_bar} beats/bar in {time.perf_counter() - t0:.1f}s -> {song.beats}")
+    if bars is not None:
+        scores = " ".join(f"{x:.2f}" for x in bars.scores)
+        print(f"  bar phase: {bars.phase} (phase scores {scores}; margin {bars.margin:.2f})")
+        if bars.margin < 0.2:
+            print("  ⚠ ambiguous bar phase (often a half-bar): check the barlines, or pass --meter")
+
+
 def cmd_merge(args: argparse.Namespace) -> None:
     from .transcribe import Transcription
     from .transcribe.ensemble import merge
@@ -52,16 +79,23 @@ def cmd_merge(args: argparse.Namespace) -> None:
 
 
 def cmd_truth(args: argparse.Namespace) -> None:
-    from .eval.synthesia import read_notes
+    import json
+
+    from .eval.synthesia import measure, read_bar_lines, read_notes
 
     song = Song.get(args.song)
     video = Path(args.video) if args.video else song.root / "source.mp4"
     t0 = time.perf_counter()
-    truth = read_notes(video)
+    geo = measure(video)
+    truth = read_notes(video, geo)
     truth.save(song.notes("video"))
     hands = {h: sum(n.hand == h for n in truth.notes) for h in ("L", "R", None)}
     print(f"✓ {len(truth.notes)} notes (L={hands['L']}, R={hands['R']}, unknown={hands[None]}) "
-          f"in {time.perf_counter() - t0:.0f}s -> {song.notes('video')}")
+          f"-> {song.notes('video')}")
+    bars = read_bar_lines(video, geo)
+    song.truth_bars.write_text(json.dumps({"downbeats": [round(float(t), 4) for t in bars]}))
+    print(f"✓ {len(bars)} bar lines (every {np.median(np.diff(bars)):.3f}s) -> {song.truth_bars} "
+          f"[{time.perf_counter() - t0:.0f}s]")
 
 
 def cmd_eval(args: argparse.Namespace) -> None:
@@ -97,6 +131,18 @@ def cmd_eval(args: argparse.Namespace) -> None:
         print(f"{name:10} {len(est.notes):6d} {m['precision']:6.1%} {m['recall']:6.1%} {m['f1']:6.1%} "
               f"{m['f1_with_offsets']:7.1%}")
 
+    if song.beats.exists() and song.truth_bars.exists():
+        import json
+
+        from .eval.metrics import evaluate_beats
+        from .rhythm.beats import BeatGrid
+
+        ref_bars = np.array(json.loads(song.truth_bars.read_text())["downbeats"]) + lag
+        grid = BeatGrid.load(song.beats)
+        m = evaluate_beats(ref_bars, grid)
+        print(f"\nbeats   : F {m['beat_f']:6.1%}  (reference: {m['ref_beats_per_bar']} beats per video bar)")
+        print(f"downbeats: F {m['downbeat_f']:6.1%}  ({len(grid.downbeats)} tracked vs {len(ref_bars)} bar lines)")
+
     if args.plot:
         from .eval.plots import piano_roll
 
@@ -124,6 +170,16 @@ def main() -> None:
     p.add_argument("--backend", default="transkun", choices=["transkun", "bytedance", "all"])
     p.add_argument("--device", default="auto", help="auto | cpu | mps | cuda")
     p.set_defaults(func=cmd_transcribe)
+
+    p = sub.add_parser("beats", help="Beat + downbeat tracking on the audio -> beats.json")
+    p.add_argument("song")
+    p.add_argument("--method", default="dp", choices=["dp", "peaks"],
+                   help="dp: tempo-continuity decoding (default); peaks: Beat This! peak picking")
+    p.add_argument("--meter", type=int, default=None, help="Beats per bar (default: detect 3 vs 4)")
+    p.add_argument("--tightness", type=float, default=300.0, help="dp: how strongly to keep tempo steady")
+    p.add_argument("--recompute", action="store_true", help="Ignore cached activations")
+    p.add_argument("--device", default="auto", help="auto | cpu | mps | cuda")
+    p.set_defaults(func=cmd_beats)
 
     p = sub.add_parser("merge", help="Combine two transcriptions: starts from one, ends from another")
     p.add_argument("song")

@@ -64,3 +64,19 @@ def evaluate(ref: Transcription, est: Transcription, onset_tolerance: float = 0.
         ri, rp, ei, ep, onset_tolerance=onset_tolerance, offset_ratio=0.2)
     return {"precision": p, "recall": r, "f1": f, "f1_with_offsets": f_off, "precision_with_offsets": p_off,
             "recall_with_offsets": r_off}
+
+
+def evaluate_beats(ref_downbeats: np.ndarray, est: "BeatGrid", window: float = 0.07) -> dict[str, float]:
+    """Beat/downbeat F-measure (mir_eval, ±70 ms). Reference beats split each reference bar
+    evenly into the whole number of tracked beats that best fits the median bar length."""
+    per_bar = max(1, round(float(np.median(np.diff(ref_downbeats))) / float(np.median(np.diff(est.beats)))))
+    ref_beats = np.concatenate([np.linspace(a, b, per_bar, endpoint=False)
+                                for a, b in zip(ref_downbeats[:-1], ref_downbeats[1:])] + [ref_downbeats[-1:]])
+    lo, hi = ref_downbeats[0] - window, ref_downbeats[-1] + window  # score only the covered span
+    def clip(x: np.ndarray) -> np.ndarray:
+        return x[(x >= lo) & (x <= hi)]
+    return {
+        "beat_f": mir_eval.beat.f_measure(ref_beats, clip(est.beats), window),
+        "downbeat_f": mir_eval.beat.f_measure(ref_downbeats, clip(est.downbeats), window),
+        "ref_beats_per_bar": per_bar,
+    }

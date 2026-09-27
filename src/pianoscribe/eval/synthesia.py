@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -189,45 +189,58 @@ def estimate_scroll(video: Path, info: VideoInfo, hit_line: int, gap: int = 10, 
     return float(np.median(speeds))
 
 
-def read_notes(
-    video: Path,
-    colors: dict[str, Hand] | None = None,
-    min_px: int = 4,
-    gap_dip: float = 0.7,
-    margin_above_line: int = 60,
-) -> Transcription:
-    """Extract every note (with its hand) from a Synthesia-style video.
+@dataclass(frozen=True)
+class Geometry:
+    info: VideoInfo
+    y_line: int  # row of the red hit line
+    idle: np.ndarray  # idle keyboard frame
+    keys: list[Key]
+    v: float  # scroll speed, px/frame
 
-    colors: which bar color is which hand, {"blue": "L", "green": "R"} by default.
-    min_px: runs shorter than this on the tape are treated as noise.
-    gap_dip: a bar is split where its brightness falls below this fraction of its median
-        (the gap between two repeated notes).
-    margin_above_line: skip the rows right above the hit line, where the 'sparkle' effects live.
-    """
-    colors = colors or {"blue": "L", "green": "R"}
+    @property
+    def px_to_s(self) -> float:
+        """Seconds per tape pixel."""
+        return 1.0 / (self.v * self.info.fps)
+
+
+def measure(video: Path) -> Geometry:
     info = probe(video)
     y_line, idle = calibrate(video, info)
-    keys = find_keys(idle, y_line)
-    v = estimate_scroll(video, info, y_line)
+    return Geometry(info, y_line, idle, find_keys(idle, y_line), estimate_scroll(video, info, y_line))
 
+
+def stitch_tape(
+    video: Path,
+    geo: Geometry,
+    sample: Callable[[np.ndarray], np.ndarray],
+    margin_above_line: int = 60,
+) -> np.ndarray:
+    """Rebuild the scrolling tape: index u holds what crosses the hit line at u * geo.px_to_s.
+
+    sample: maps a (rows, width, 3) band to per-row values of shape (rows, ...).
+    margin_above_line: skip the rows right above the hit line, where the 'sparkle' effects live.
+    Frames without the hit line (intro/outro cards) are skipped; their span stays zero.
+    """
+    info, y_line, v = geo.info, geo.y_line, geo.v
     rows = int(np.ceil(v)) + 8  # a little overlap between consecutive frames' bands
     y0 = y_line - margin_above_line - rows
-    cols = np.array([np.arange(round(k.x) - 2, round(k.x) + 3) for k in keys]).clip(0, info.width - 1)
 
-    # Stream down to the hit line too: frames where it is missing (intro/outro cards) are skipped.
     def redness(row: np.ndarray) -> float:
         return float((row[..., 0].astype(int) - row[..., 1:].mean(-1)).mean())
 
-    red_min = 0.5 * redness(idle[y_line])
+    red_min = 0.5 * redness(geo.idle[y_line])
     length = int(np.ceil(info.n_frames * v)) + y_line + 1
-    tape = np.zeros((length, len(keys), 3), np.float32)
+    tape: np.ndarray | None = None
     count = np.zeros(length, np.float32)
     f, valid = -1, 0
+    # Stream down to the hit line too, to check it is on screen.
     for f, band in enumerate(stream_band(video, info, y0, y_line - y0 + 2)):
         if max(redness(band[-3]), redness(band[-2]), redness(band[-1])) < red_min:
             continue
         valid += 1
-        samples = band[:rows, cols].mean(axis=2)  # (rows, keys, 3)
+        samples = np.asarray(sample(band[:rows]), np.float32)
+        if tape is None:
+            tape = np.zeros((length, *samples.shape[1:]), np.float32)
         base = round(f * v + y_line - y0)  # tape index of the band's top row
         lo = base - rows + 1
         if lo < 0:
@@ -236,7 +249,30 @@ def read_notes(
         count[lo : base + 1] += 1
     if f + 1 != info.n_frames:
         raise RuntimeError(f"Streamed {f + 1} frames but the video has {info.n_frames}")
-    tape /= np.maximum(count, 1)[:, None, None]
+    if tape is None or valid < 0.5 * info.n_frames:
+        raise RuntimeError(f"Only {valid}/{info.n_frames} frames show the hit line; is this a Synthesia video?")
+    return tape / np.maximum(count, 1).reshape(-1, *[1] * (tape.ndim - 1))
+
+
+def read_notes(
+    video: Path,
+    geo: Geometry | None = None,
+    colors: dict[str, Hand] | None = None,
+    min_px: int = 4,
+    gap_dip: float = 0.7,
+) -> Transcription:
+    """Extract every note (with its hand) from a Synthesia-style video.
+
+    colors: which bar color is which hand, {"blue": "L", "green": "R"} by default.
+    min_px: runs shorter than this on the tape are treated as noise.
+    gap_dip: a bar is split where its brightness falls below this fraction of its median
+        (the gap between two repeated notes).
+    """
+    colors = colors or {"blue": "L", "green": "R"}
+    geo = geo or measure(video)
+    keys = geo.keys
+    cols = np.array([np.arange(round(k.x) - 2, round(k.x) + 3) for k in keys]).clip(0, geo.info.width - 1)
+    tape = stitch_tape(video, geo, lambda band: band[:, cols].mean(axis=2))  # (length, keys, 3)
 
     # White-key notes are drawn in pastel shades (saturation: light blue ~0.28, light green ~0.71)
     # and black-key notes fully saturated (~1.0); grid lines, sparkles, background stay < ~0.07.
@@ -247,7 +283,6 @@ def read_notes(
     lit = (sat > min_sat) & (val > 0.35)
     lit[1:-1] |= lit[:-2] & lit[2:]  # heal single-pixel compression holes
 
-    px_to_s = 1.0 / (v * info.fps)
     notes = []
     for k, key in enumerate(keys):
         for a, b in runs(lit[:, k]):
@@ -260,7 +295,26 @@ def read_notes(
                     continue
                 r, g, bl = tape[sa:sb, k].mean(axis=0)
                 hue = "blue" if bl > max(r, g) else "green" if g > max(r, bl) else "red"
-                notes.append(NoteEvent(key.pitch, sa * px_to_s, sb * px_to_s, 80, colors.get(hue)))
-    if valid < 0.5 * info.n_frames:
-        raise RuntimeError(f"Only {valid}/{info.n_frames} frames show the hit line; is this a Synthesia video?")
+                notes.append(NoteEvent(key.pitch, sa * geo.px_to_s, sb * geo.px_to_s, 80, colors.get(hue)))
     return Transcription(notes)
+
+
+def read_bar_lines(video: Path, geo: Geometry | None = None, min_brightness: float = 4.0) -> np.ndarray:
+    """Times (s) of the faint full-width bar lines that scroll with the notes (= downbeats).
+
+    A bar line lifts the *median* brightness across the whole width (~10 vs 0), which note bars,
+    covering only a few columns, never do. Lines hidden by compression are re-inserted where a
+    gap is a whole multiple of the typical bar length.
+    """
+    geo = geo or measure(video)
+    brightness = stitch_tape(video, geo, lambda band: np.median(band.max(-1), axis=1))
+    times = [(a + b) / 2 * geo.px_to_s for a, b in runs(brightness > min_brightness) if b - a < 30]
+    if len(times) < 3:
+        return np.array(times)
+    bar = float(np.median(np.diff(times)))
+    filled = [times[0]]
+    for t in times[1:]:
+        n = round((t - filled[-1]) / bar)
+        filled += [filled[-1] + (t - filled[-1]) * k / n for k in range(1, n)] if n > 1 else []
+        filled.append(t)
+    return np.array(filled)

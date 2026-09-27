@@ -27,6 +27,20 @@ class Song:
         """Canonical analysis audio: mono 44.1 kHz WAV."""
         return self.root / "audio.wav"
 
+    @property
+    def beats(self) -> Path:
+        return self.root / "beats.json"
+
+    @property
+    def activations(self) -> Path:
+        """Cached per-frame beat/downbeat activations."""
+        return self.root / "activations.npz"
+
+    @property
+    def truth_bars(self) -> Path:
+        """Downbeats read from a Synthesia video (answer key for beat tracking)."""
+        return self.root / "truth_bars.json"
+
     def notes(self, backend: str) -> Path:
         return self.root / "notes" / f"{backend}.mid"
 
