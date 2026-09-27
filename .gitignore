@@ -1,9 +1,17 @@
-/.vscode
-/test.py
-/tmp.png
-out/
-old/
-/video
-__pycache__
-.*
-*.ipynb
+# Python
+__pycache__/
+*.pyc
+.venv/
+.uv-cache/
+
+# Per-song data (audio, video, generated scores) never goes in git
+library/
+# Downloaded model checkpoints
+models/
+# Old codebase, kept locally for reference
+legacy/
+
+# OS / editor
+.DS_Store
+.vscode/
+.ipynb_checkpoints/

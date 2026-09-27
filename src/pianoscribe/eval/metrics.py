@@ -1,0 +1,66 @@
+"""Compare a transcription against a reference (mir_eval's standard AMT metrics)."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import replace
+
+import mir_eval
+import numpy as np
+
+from ..transcribe.base import Transcription
+
+
+def estimate_alignment(
+    ref: Transcription, est: Transcription, max_lag: float = 1.0, shifts=range(-36, 37, 12)
+) -> tuple[int, float, int]:
+    """Global (pitch shift, time lag) that best maps `ref` onto `est`.
+
+    Collects onset differences between same-pitch note pairs; the true lag is the sharp peak of
+    that histogram, and the true octave shift is the one whose peak collects the most pairs.
+    Returns (shift, lag, n_supporting_pairs).
+    """
+    est_onsets = defaultdict(list)
+    for n in est.notes:
+        est_onsets[n.pitch].append(n.onset)
+    est_arr = {p: np.array(v) for p, v in est_onsets.items()}
+
+    best = (0, 0.0, -1)
+    bins = np.arange(-max_lag, max_lag + 1e-9, 0.005)
+    for shift in shifts:
+        ref_onsets = defaultdict(list)
+        for n in ref.notes:
+            ref_onsets[n.pitch + shift].append(n.onset)
+        diffs = [
+            d
+            for p, ons in ref_onsets.items()
+            if p in est_arr
+            for d in np.subtract.outer(est_arr[p], np.array(ons)).ravel()
+            if abs(d) < max_lag
+        ]
+        if not diffs:
+            continue
+        hist, _ = np.histogram(diffs, bins)
+        support = np.convolve(hist, np.ones(9, int), mode="same")  # +-20 ms window
+        peak = int(np.argmax(support))
+        if support[peak] > best[2]:
+            best = (shift, float(bins[peak] + 0.0025), int(support[peak]))
+    return best
+
+
+def shifted(t: Transcription, pitch: int = 0, lag: float = 0.0) -> Transcription:
+    """Move every note by `pitch` semitones and `lag` seconds, dropping notes pushed before 0."""
+    notes = [replace(n, pitch=n.pitch + pitch, onset=n.onset + lag, offset=n.offset + lag)
+             for n in t.notes if n.onset + lag >= 0]
+    return Transcription(notes, [(max(a + lag, 0.0), b + lag) for a, b in t.pedal if b + lag > 0])
+
+
+def evaluate(ref: Transcription, est: Transcription, onset_tolerance: float = 0.05) -> dict[str, float]:
+    ri, rp = ref.intervals_and_pitches()
+    ei, ep = est.intervals_and_pitches()
+    p, r, f, _ = mir_eval.transcription.precision_recall_f1_overlap(
+        ri, rp, ei, ep, onset_tolerance=onset_tolerance, offset_ratio=None)
+    p_off, r_off, f_off, _ = mir_eval.transcription.precision_recall_f1_overlap(
+        ri, rp, ei, ep, onset_tolerance=onset_tolerance, offset_ratio=0.2)
+    return {"precision": p, "recall": r, "f1": f, "f1_with_offsets": f_off, "precision_with_offsets": p_off,
+            "recall_with_offsets": r_off}

@@ -1,0 +1,30 @@
+[project]
+name = "pianoscribe"
+version = "0.1.0"
+description = "Turn solo-piano recordings into sheet music you can practice from."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy>=2",
+    "torch>=2.8",
+    "pretty-midi>=0.2.10",
+    "mir-eval>=0.8",
+    "soundfile>=0.12",
+    "soxr>=0.5",
+    "yt-dlp[default,deno]>=2026.8",
+]
+
+[project.optional-dependencies]
+# Transcription backends are optional so we can swap/compare them.
+transkun = ["transkun>=2.0.1"]
+bytedance = ["piano-transcription-inference>=0.0.6", "audioread>=3"]
+
+[project.scripts]
+pianoscribe = "pianoscribe.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pianoscribe"]
