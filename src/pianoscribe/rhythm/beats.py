@@ -114,7 +114,7 @@ def decode_beats(act: Activations, period: float, tightness: float = 300.0) -> n
     The log-ratio penalty is symmetric in tempo (a beat 10% early costs what 10% late does) and
     grows fast. At tightness 300 a phase flip or double-time burst (a 1.5x or 0.5x interval)
     costs ~50-145, against ~1 gained per real beat, while a 5% tempo change costs ~0.7.
-    On 'exile' (beat F): peak picking 82%; tightness 30: 90%, 100: 89%, 300: 98%. That song is
+    On 'exile' (beat F): peak picking 84%; tightness 30: 92%, 100: 91%, 300: 100%. That song is
     a constant-tempo MIDI rendering, so stiffer always wins there: re-check on a rubato recording.
     """
     a = act.beat

@@ -303,14 +303,20 @@ def read_bar_lines(video: Path, geo: Geometry | None = None, min_brightness: flo
     """Times (s) of the faint full-width bar lines that scroll with the notes (= downbeats).
 
     A bar line lifts the *median* brightness across the whole width (~10 vs 0), which note bars,
-    covering only a few columns, never do. Lines hidden by compression are re-inserted where a
-    gap is a whole multiple of the typical bar length.
+    covering only a few columns, never do. A faint line can split into two detections a few ms
+    apart, so detections within a quarter bar are merged; lines hidden by compression are
+    re-inserted where a gap is a whole multiple of the typical bar length.
     """
     geo = geo or measure(video)
     brightness = stitch_tape(video, geo, lambda band: np.median(band.max(-1), axis=1))
-    times = [(a + b) / 2 * geo.px_to_s for a, b in runs(brightness > min_brightness) if b - a < 30]
-    if len(times) < 3:
-        return np.array(times)
+    raw = [(a + b) / 2 * geo.px_to_s for a, b in runs(brightness > min_brightness) if b - a < 30]
+    if len(raw) < 3:
+        return np.array(raw)
+    bar = float(np.median(np.diff(raw)))  # duplicates are rare: the median is unaffected
+    times = [raw[0]]
+    for t in raw[1:]:
+        if t - times[-1] > bar / 4:
+            times.append(t)
     bar = float(np.median(np.diff(times)))
     filled = [times[0]]
     for t in times[1:]:

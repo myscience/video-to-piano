@@ -143,6 +143,34 @@ def cmd_eval(args: argparse.Namespace) -> None:
         print(f"\nbeats   : F {m['beat_f']:6.1%}  (reference: {m['ref_beats_per_bar']} beats per video bar)")
         print(f"downbeats: F {m['downbeat_f']:6.1%}  ({len(grid.downbeats)} tracked vs {len(ref_bars)} bar lines)")
 
+        # Rhythm: each side quantized on its own grid, then compared in ticks. Both grids are
+        # numbered in beats from their first downbeat; line them up at the video's first bar.
+        from dataclasses import replace
+
+        from .eval.metrics import evaluate_rhythm, grid_from_bars
+        from .rhythm.quantize import TICKS_PER_BEAT, quantize, to_beats
+
+        offset = round(float(to_beats(ref_bars[:1], grid)[0])) * TICKS_PER_BEAT
+        qref = [replace(q, start=q.start + offset, end=q.end + offset)
+                for q in quantize(ref, grid_from_bars(ref_bars, m["ref_beats_per_bar"]))]
+        print(f"\n{'rhythm':10} {'pairs':>6} {'start':>7} {'length':>7} {'short':>6} {'long':>6}"
+              "   (16th grid; share of shared notes written exactly like the reference)")
+        quantized = {name: quantize(est, grid) for name, est in ests.items()}
+        for name, est in ests.items():
+            r = evaluate_rhythm(qref, quantized[name], ref, est)
+            print(f"{name:10} {r['pairs']:6d} {r['start_exact']:7.1%} {r['duration_exact']:7.1%} "
+                  f"{r['duration_too_short']:6.1%} {r['duration_too_long']:6.1%}")
+
+        if any(n.hand for n in ref.notes):
+            from .eval.metrics import evaluate_hands
+            from .notation.hands import assign_hands, decode_hands, split_fixed
+
+            print(f"\n{'hands':10} {'split C4':>9} {'greedy':>7} {'dp':>7}   (share of shared notes given the correct hand)")
+            for name, est in ests.items():
+                q = quantized[name]
+                accs = [evaluate_hands(ref, est, f(q)) for f in (split_fixed, assign_hands, decode_hands)]
+                print(f"{name:10} {accs[0]:9.1%} {accs[1]:7.1%} {accs[2]:7.1%}")
+
     if args.plot:
         from .eval.plots import piano_roll
 

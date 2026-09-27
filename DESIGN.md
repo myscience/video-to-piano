@@ -122,13 +122,61 @@ reports mir_eval note metrics (onset ±50 ms; "+off" also requires the offset wi
   (`truth_bars.json`). They show up as a lift of the *median* brightness across the width, which
   note bars never cause.
 
-| 'exile' (87 bars, 4/4, 74 BPM) | beat F | downbeat F |
+| 'exile' (83 bars, 4/4, 74 BPM) | beat F | downbeat F |
 |---|---|---|
-| Beat This! peak picking | 82.3% | 67.9% (it guessed 2 beats/bar) |
-| DP (tightness 300) + phase | **97.6%** | **97.6%** (every true bar line hit) |
+| Beat This! peak picking | 84.3% | 69.2% (it guessed 2 beats/bar) |
+| DP, tightness 30 / 100 | 91.9% / 90.7% | 67.9% / 67.9% |
+| **DP, tightness 300** + phase | **100%** | **100%** |
 
-Caveat: 'exile' is a constant-tempo MIDI rendering, so the stiffest tightness always wins there
-(30 → 90%, 100 → 89%, 300 → 98%). Re-check on a rubato recording before trusting the default.
+- One slipped beat shifts the global bar phase for the rest of the song: at tightness 30–100
+  beats are still ~91% right but downbeats collapse to 68%. Per-bar phase decoding would fix
+  that failure mode.
+- Caveat: 'exile' is a constant-tempo MIDI rendering, so the stiffest tightness always wins
+  there. Re-check on a rubato recording before trusting the default.
+
+## Stage B.2: quantization
+
+`rhythm/quantize.py`: seconds → continuous beat positions (`to_beats`, linear between tracked
+beats) → integer **ticks**, 12 per beat (holds 16ths = 3, 8th triplets = 4, 16th triplets = 2).
+Every start and end is snapped *independently* (positions, not durations), to a 16th grid by
+default. `pianoscribe eval` compares each quantized note with the video's (both on their own
+grids, lined up at the video's first bar):
+
+| 'exile', ensemble notes | start exact | length exact | too short | too long |
+|---|---|---|---|---|
+| 16th grid, independent snapping | **99.7%** | 84.2% | 5.8% | 10.0% |
+
+- Starts are essentially solved. Note **ends** are the noisy part: no bias overall (median
+  +6 ms), but long notes come out ~0.2 beats early (the sound decays before the key is released):
+  89% exact for notes < ⅓ beat, 35% for notes > 1 beat.
+- 99% of the reference's note ends coincide with some other note's start. But snapping ends to
+  the nearest start of *any* note gains little (85.4%): in continuous 16ths there is a start
+  everywhere. Even the next start in the *same hand* (oracle hands from the video) reaches only
+  87.3%, because a hand holds several voices. **Written lengths are a per-voice notation
+  decision**, so they are deferred to score building, after hands and voices.
+
+## Stage B.3: hands
+
+`notation/hands.py`. Audio has no hand information; the video's bar colors are the answer key.
+On 'exile' the hands overlap by more than an octave (left up to F#4, right down to D#3).
+
+| 'exile', ensemble notes | correct hand |
+|---|---|
+| fixed split at middle C | 90.9% |
+| greedy (`assign_hands`): nearest hand center, then span ≤ octave, then ≤ 5 notes per hand | 94.9% |
+| **DP (`decode_hands`)**: best path over both hands' positions | **96.1%** (ByteDance notes: 96.8%) |
+
+- Both use the same physical rules, measured on the answer key: 352 right-hand chords span
+  exactly an octave and only 3 go wider (a limit of 11 semitones collapses to 80.9%).
+- Greedy errors come in **runs** (75% within a beat of another): a right-hand dip drags the
+  left hand's running center up. The DP judges each choice by what it costs later; its key
+  ingredient is a **free reach** of a fifth (a hand in position covers five keys without moving):
+  free 0 → 95.1%, 5 → 96.1%, 12 → 94.7%. Anchoring hands at their inner edge was worse.
+- Part of the remaining error is the answer key: the tutorial's **audio and on-screen MIDI
+  differ slightly**. Both models independently hear notes the video doesn't draw (28 of
+  transkun's 40 extras; A#5: 83 heard by each model vs 74 drawn), e.g. an A#5 doubling a
+  right-hand A#3–C#4–A#4 chord. For the chord as heard, splitting it between the hands is right.
+  On chords where video and audio agree, the DP is at 96.6%.
 
 ### Gotchas found along the way (keep in mind for other videos)
 
@@ -141,14 +189,17 @@ Caveat: 'exile' is a constant-tempo MIDI rendering, so the stiffest tightness al
   misaligns by a row).
 - ffmpeg input seeking (`-ss`) is not frame-exact on every file. Anything needing exact frame
   indices streams from frame 0.
+- A faint bar line can be detected twice, a few ms apart. Without merging, each duplicate
+  became an extra bar, which silently capped beat/downbeat F at 97.6% and drifted the rhythm
+  metric's bar numbering by whole bars.
 - Intro/outro cards have other layouts. Frames where the red hit line is missing are skipped,
   and only the span the video covers is scored.
 
 ## Roadmap
 
 1. ✅ **Spike:** repo reset, fetch, two backends, video ground truth, eval harness.
-2. **Stage B core:** ✅ beats and bars → onset quantization on the beat grid → hand split (scored
-   against the video's hand colors) → `music21` score → MusicXML.
+2. **Stage B core:** ✅ beats and bars → ✅ quantization → ✅ hand split → voices and written
+   lengths → `music21` score → MusicXML.
 3. **Stage C:** MusicXML → PDF (LilyPond via `musicxml2ly`, or Verovio).
 4. **Viewer:** FastAPI + Verovio. The score is synced to the *original audio* through the beat
    map, so the cursor follows rubato. Loop sections, slow down, hide a hand; open it on an iPad.
