@@ -24,6 +24,12 @@ KK_MAJOR = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66,
 KK_MINOR = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
 # Key signature of each major tonic; the flat side where both exist (Gb over F#, Db over C#).
 MAJOR_SHARPS = {0: 0, 7: 1, 2: 2, 9: 3, 4: 4, 11: 5, 6: -6, 1: -5, 8: -4, 3: -3, 10: -2, 5: -1}
+# Notes outside the key, named by their usual role: semitones above the tonic -> (scale degree,
+# alteration of that degree's note). Major keys raise 1 and 4 (V/ii, V/V) and borrow the minor's
+# b3, b6 and b7; minor keys raise 3, 4, 6 and 7 (leading tones: G# in A minor, E# in F# minor)
+# and lower only the Neapolitan 2nd.
+CHROMATIC = {"major": {1: (0, 1), 3: (2, -1), 6: (3, 1), 8: (5, -1), 10: (6, -1)},
+             "minor": {1: (1, -1), 4: (2, 1), 6: (3, 1), 9: (5, 1), 11: (6, 1)}}
 
 
 @dataclass(frozen=True)
@@ -43,7 +49,7 @@ class Key:
 
     @property
     def name(self) -> str:
-        letter, alter, _ = spell(60 + self.tonic, self.sharps)
+        letter, alter, _ = spell(60 + self.tonic, self)
         return f"{LETTERS[letter]}{'♯' * alter if alter > 0 else '♭' * -alter} {self.mode}"
 
 
@@ -68,25 +74,28 @@ def key_alters(sharps: int) -> list[int]:
 
 
 @lru_cache(maxsize=4096)
-def spell(midi: int, sharps: int) -> tuple[int, int, int]:
+def spell(midi: int, key: Key) -> tuple[int, int, int]:
     """(letter index C=0..B=6, alter, octave) the way the key would write it: scale notes by the
-    key's own names (B♭, not A♯, in G♭ major), chromatic notes leaning like the signature."""
-    pc, alters = midi % 12, key_alters(sharps)
-    letter = next((i for i in range(7) if (NATURAL[i] + alters[i]) % 12 == pc), None)
-    if letter is not None:
+    key's own names (B♭, not A♯, in G♭ major), the others by their role (CHROMATIC)."""
+    pc, alters = midi % 12, key_alters(key.sharps)
+    in_key = [i for i in range(7) if (NATURAL[i] + alters[i]) % 12 == pc]
+    if in_key:
+        letter = in_key[0]
         alter = alters[letter]
-    elif pc in NATURAL:
-        letter, alter = NATURAL.index(pc), 0
-    elif sharps > 0:
-        letter, alter = NATURAL.index(pc - 1), 1
     else:
-        letter, alter = NATURAL.index((pc + 1) % 12), -1
+        tonic = next(i for i in range(7) if (NATURAL[i] + alters[i]) % 12 == key.tonic)
+        degree, shift = CHROMATIC[key.mode][(pc - key.tonic) % 12]
+        letter = (tonic + degree) % 7
+        alter = alters[letter] + shift
+        if abs(alter) > 1:  # never a double sharp or flat: the plainer name (A, not B♭♭ in G♭)
+            letter, alter = ((NATURAL.index(pc), 0) if pc in NATURAL else
+                             (NATURAL.index(pc - 1), 1) if key.sharps > 0 else (NATURAL.index((pc + 1) % 12), -1))
     return letter, alter, (midi - NATURAL[letter] - alter) // 12 - 1
 
 
-def diatonic(midi: int, sharps: int) -> int:
+def diatonic(midi: int, key: Key) -> int:
     """Staff position: 7 per octave, C0 = 0."""
-    letter, _, octave = spell(midi, sharps)
+    letter, _, octave = spell(midi, key)
     return octave * 7 + letter
 
 
@@ -213,17 +222,17 @@ def _beams(pieces: list[Piece]) -> list[list[tuple[int, str]]]:
     return beams
 
 
-def _accidentals(bar: Bar, sharps: int) -> dict[tuple[int, int, int], str]:
+def _accidentals(bar: Bar, key: Key) -> dict[tuple[int, int, int], str]:
     """Printed accidentals for one staff's bar: {(voice, piece index, pitch): accidental}.
     A note shows one when it differs from the key signature, or from an earlier accidental on the
     same line in this bar; tied continuations never do."""
-    alters = key_alters(sharps)
+    alters = key_alters(key.sharps)
     state: dict[tuple[int, int], int] = {}
     notes = sorted(((p.start, v.number, i, pitch, p.tie_stop) for v in bar.voices
                     for i, p in enumerate(v.pieces) for pitch in p.pitches))
     printed = {}
     for _, vnum, i, pitch, tied in notes:
-        letter, alter, octave = spell(pitch, sharps)
+        letter, alter, octave = spell(pitch, key)
         current = state.get((letter, octave), alters[letter])
         if not tied and alter != current:
             printed[(vnum, i, pitch)] = ACCIDENTALS[alter]
@@ -236,7 +245,7 @@ def _clef(number: int, which: str) -> str:
     return f'<clef number="{number}"><sign>{sign}</sign><line>{line}</line></clef>'
 
 
-def _note(p: Piece, i: int, pitch: int | None, chord: bool, voice: Voice, staff: int, sharps: int,
+def _note(p: Piece, i: int, pitch: int | None, chord: bool, voice: Voice, staff: int, key: Key,
           accidental: str | None, beams: list[tuple[int, str]], bar_len: int, bar_start: int = 0) -> str:
     # Notes carry their own id, "n<pitch>t<tick>v<voice>": Verovio keeps it in the SVG and the
     # timemap, so the viewer learns each note's pitch without asking Verovio note by note.
@@ -246,7 +255,7 @@ def _note(p: Piece, i: int, pitch: int | None, chord: bool, voice: Voice, staff:
     if pitch is None:
         out.append('<rest measure="yes"/>' if p.length == bar_len and p.start == 0 else "<rest/>")
     else:
-        letter, alter, octave = spell(pitch, sharps)
+        letter, alter, octave = spell(pitch, key)
         out.append(f"<pitch><step>{LETTERS[letter]}</step>" + (f"<alter>{alter}</alter>" if alter else "") +
                    f"<octave>{octave}</octave></pitch>")
     out.append(f"<duration>{p.length}</duration>")
@@ -303,7 +312,7 @@ def write(staves: list[Staff], key: Key, beats_per_bar: int, bpm: float, title: 
         total_voices = sum(len(s.bars[b].voices) for s in staves)
         for staff in staves:
             bar = staff.bars[b]
-            printed = _accidentals(bar, sharps)
+            printed = _accidentals(bar, key)
             for vi, voice in enumerate(bar.voices):
                 beams = _beams(voice.pieces)
                 clef_pending = bar.clef if vi == 0 else None
@@ -316,10 +325,10 @@ def write(staves: list[Staff], key: Key, beats_per_bar: int, bpm: float, title: 
                                      f"<staff>{staff.number}</staff></forward>")
                         continue
                     if not p.pitches:
-                        lines.append(_note(p, i, None, False, voice, staff.number, sharps, None, beams[i], bar_len))
+                        lines.append(_note(p, i, None, False, voice, staff.number, key, None, beams[i], bar_len))
                         continue
                     for k, pitch in enumerate(p.pitches):
-                        lines.append(_note(p, i, pitch, k > 0, voice, staff.number, sharps,
+                        lines.append(_note(p, i, pitch, k > 0, voice, staff.number, key,
                                            printed.get((voice.number, i, pitch)), beams[i], bar_len, b * bar_len))
                 voices_written += 1
                 if voices_written < total_voices:

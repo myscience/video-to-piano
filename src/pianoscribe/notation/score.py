@@ -223,15 +223,15 @@ def build_staff(notes: list[QuantizedNote], hand: Hand, bar: int, n_bars: int, p
 STAFF_LINES = {"treble": (30, 38), "bass": (18, 26)}  # outer lines as staff positions: E4-F5, G2-A3
 
 
-def ledger_lines(midi: int, which: str, sharps: int) -> int:
+def ledger_lines(midi: int, which: str, key: Key) -> int:
     """Ledger lines a note needs on a treble or bass staff: every 2 diatonic steps past an outer
     line adds one (C4 on treble: 1; D4 hangs below the staff: 0)."""
     bottom, top = STAFF_LINES[which]
-    d = diatonic(midi, sharps)
+    d = diatonic(midi, key)
     return max(bottom - d, d - top, 0) // 2
 
 
-def choose_clefs(bars: list[Bar], home: str, sharps: int, switch: float = 8.0, away: float = 1.0) -> list[str]:
+def choose_clefs(bars: list[Bar], home: str, key: Key, switch: float = 8.0, away: float = 1.0) -> list[str]:
     """Clef for every bar of a staff, chosen globally (dynamic programming over the bars).
 
     Minimizes the ledger lines of all notes, plus `switch` per clef change (a change must save
@@ -243,7 +243,7 @@ def choose_clefs(bars: list[Bar], home: str, sharps: int, switch: float = 8.0, a
     cost, back = {c: 0.0 for c in clefs}, []
     for i, bar in enumerate(bars):
         pitches = [p for v in bar.voices for piece in v.pieces for p in piece.pitches]
-        here = {c: sum(ledger_lines(p, c, sharps) for p in pitches) + (away if c != home else 0.0) for c in clefs}
+        here = {c: sum(ledger_lines(p, c, key) for p in pitches) + (away if c != home else 0.0) for c in clefs}
         new, step = {}, {}
         for c in clefs:
             options = {c: cost[c]}
@@ -303,7 +303,7 @@ def build_score(notes: list[QuantizedNote], hands: list[Hand], beats_per_bar: in
     staves, voiced, first = [], {}, {}
     for hand, number, home in (("R", 1, "treble"), ("L", 2, "bass")):
         bars, voiced[hand] = build_staff([n for n, h in zip(notes, hands) if h == hand], hand, bar, n_bars, pedal, voices)
-        clefs = choose_clefs(bars, home, key.sharps)
+        clefs = choose_clefs(bars, home, key)
         place_clefs(bars, clefs)
         first[number] = clefs[0]
         staves.append(Staff(number, bars))

@@ -451,9 +451,30 @@ function follow(q) {
 
 // ---- correcting the score ------------------------------------------------------------------
 
-const FLATS = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
-const SHARPS = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
-const noteName = (p) => ((S.sync.key_sharps ?? -1) < 0 ? FLATS : SHARPS)[p % 12] + (Math.floor(p / 12) - 1);
+// Note names as the score spells them (notation/musicxml.py: spell): the key's own notes, the
+// others by their role in the mode, no double sharps or flats.
+const NATURAL = [0, 2, 4, 5, 7, 9, 11];
+const CHROMATIC = { major: { 1: [0, 1], 3: [2, -1], 6: [3, 1], 8: [5, -1], 10: [6, -1] },
+                    minor: { 1: [1, -1], 4: [2, 1], 6: [3, 1], 9: [5, 1], 11: [6, 1] } };
+function noteName(p) {
+  const { key_sharps: sharps = 0, key_tonic: tonic = 0, key_mode: keyMode = "major" } = S.sync;
+  const alters = [0, 0, 0, 0, 0, 0, 0];
+  for (const l of (sharps > 0 ? "FCGDAEB" : "BEADGCF").slice(0, Math.abs(sharps))) alters["CDEFGAB".indexOf(l)] = Math.sign(sharps);
+  const pc = p % 12, own = (l) => (NATURAL[l] + alters[l] + 12) % 12;
+  let letter = [0, 1, 2, 3, 4, 5, 6].find((l) => own(l) === pc), alter;
+  if (letter !== undefined) alter = alters[letter];
+  else {
+    const [degree, shift] = CHROMATIC[keyMode][(pc - tonic + 12) % 12];
+    letter = ([0, 1, 2, 3, 4, 5, 6].find((l) => own(l) === tonic) + degree) % 7;
+    alter = alters[letter] + shift;
+    if (Math.abs(alter) > 1) {
+      if (NATURAL.includes(pc)) [letter, alter] = [NATURAL.indexOf(pc), 0];
+      else [letter, alter] = sharps > 0 ? [NATURAL.indexOf(pc - 1), 1] : [NATURAL.indexOf((pc + 1) % 12), -1];
+    }
+  }
+  const octave = Math.floor((p - NATURAL[letter] - alter) / 12) - 1;
+  return "CDEFGAB"[letter] + (alter > 0 ? "♯" : alter < 0 ? "♭" : "") + octave;
+}
 
 function handOf(span) {
   // Staff 1 (top) is the right hand, staff 2 the left.
