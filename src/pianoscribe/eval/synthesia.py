@@ -199,10 +199,13 @@ def find_keys(frame: np.ndarray, hit_line: int) -> list[Key]:
     lum = frame.mean(-1)
     keyboard = h - hit_line
 
-    # White keys: at the bottom only white keys exist, separated by thin dark lines.
-    seps = [(a + b - 1) / 2 for a, b in runs(lum[hit_line + int(0.85 * keyboard)] < 150)]
+    # White keys: at the bottom only white keys exist, separated by thin dark lines. The row sits
+    # above note-name labels printed on some keyboards, and lines hugging the frame edge are the
+    # keyboard's border, not keys (they made two 0-1 px "keys" on 'gymnopedie-1').
+    seps = [(a + b - 1) / 2 for a, b in runs(lum[hit_line + int(0.78 * keyboard)] < 150)]
+    white_w = float(np.median(np.diff(seps))) if len(seps) > 1 else w / 52
+    seps = [x for x in seps if 0.4 * white_w < x < w - 0.4 * white_w]
     bounds = np.array([0.0, *seps, float(w)])
-    white_w = float(np.median(np.diff(bounds)))
 
     # Black keys: dark runs of plausible width in the upper part of the keyboard.
     black_runs = [
@@ -379,12 +382,13 @@ def read_notes(
 ) -> Transcription:
     """Extract every note (with its hand) from a Synthesia-style video.
 
-    colors: which bar color is which hand, {"blue": "L", "green": "R"} by default.
+    colors: which bar color is which hand. Default: blue = left, green or warm (red, orange,
+        yellow: tutorials vary) = right.
     min_px: runs shorter than this on the tape are treated as noise.
     gap_dip: a bar is split where its brightness falls below this fraction of its median
         (the gap between two repeated notes).
     """
-    colors = colors or {"blue": "L", "green": "R"}
+    colors = colors or {"blue": "L", "green": "R", "red": "R"}
     geo = geo or measure(video)
     keys = geo.keys
     cols = np.array([np.arange(round(k.x) - 2, round(k.x) + 3) for k in keys]).clip(0, geo.info.width - 1)
@@ -415,14 +419,16 @@ def read_notes(
 def read_bar_lines(video: Path, geo: Geometry | None = None, min_brightness: float = 4.0) -> np.ndarray:
     """Times (s) of the faint full-width bar lines that scroll with the notes (= downbeats).
 
-    A bar line lifts the *median* brightness across the whole width (~10 vs 0), which note bars,
-    covering only a few columns, never do. A faint line can split into two detections a few ms
+    A bar line lifts the *median* brightness across the whole width (~10 above the background),
+    which note bars, covering only a few columns, never do. Measured against the background's own
+    level: black in most tutorials, dark grey in some. A faint line can split into two detections a few ms
     apart, so detections within a quarter bar are merged; lines hidden by compression are
     re-inserted where a gap is a whole multiple of the typical bar length.
     """
     geo = geo or measure(video)
     brightness = stitch_tape(video, geo, lambda band: np.median(band.max(-1), axis=1))
-    raw = [(a + b) / 2 * geo.px_to_s for a, b in runs(brightness > min_brightness) if b - a < 30]
+    background = float(np.median(brightness[brightness > 0])) if np.any(brightness > 0) else 0.0
+    raw = [(a + b) / 2 * geo.px_to_s for a, b in runs(brightness > background + min_brightness) if b - a < 30]
     if len(raw) < 3:
         return np.array(raw)
     bar = float(np.median(np.diff(raw)))  # duplicates are rare: the median is unaffected

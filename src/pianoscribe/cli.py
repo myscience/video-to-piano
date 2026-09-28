@@ -90,6 +90,29 @@ def cmd_add(args: argparse.Namespace) -> None:
     print(f"✓ {song.slug} ready in {time.perf_counter() - t0:.0f}s -> {song.pdf}  (pianoscribe serve to practice)")
 
 
+MODELS = {  # checkpoints that don't ship with their pip package (transkun's does)
+    "models/bytedance/note_F1=0.9677_pedal_F1=0.9186.pth":
+        "https://zenodo.org/record/4034264/files/CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1",
+    "models/beat_this/final0.ckpt": "https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt",
+}
+
+
+def cmd_download_models(args: argparse.Namespace) -> None:
+    import shutil
+    import urllib.request
+
+    for dest, url in MODELS.items():
+        path = Path(dest)
+        if path.exists() and path.stat().st_size > 1_000_000:
+            print(f"✓ {dest} (already there)")
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"  downloading {dest} …")
+        with urllib.request.urlopen(url) as r, open(path, "wb") as out:
+            shutil.copyfileobj(r, out)
+        print(f"✓ {dest} ({path.stat().st_size / 1e6:.0f} MB)")
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     import uvicorn
 
@@ -250,6 +273,9 @@ def main() -> None:
     p.add_argument("--png", action="store_true", help="Also write PNG previews of each page")
     p.add_argument("--one-voice", action="store_true", help="One voice of chords per hand (no melody/bass split)")
     p.set_defaults(func=cmd_score)
+
+    p = sub.add_parser("download-models", help="Fetch the ByteDance and Beat This! checkpoints into models/")
+    p.set_defaults(func=cmd_download_models)
 
     p = sub.add_parser("add", help="Everything at once: URL or file -> transcription -> beats -> score")
     p.add_argument("source", help="A YouTube (or other yt-dlp) URL, or a local audio/video file")

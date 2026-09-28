@@ -305,6 +305,25 @@ quantized notes at every build (`notation/edits.py`), so re-running any stage ke
   (F1 with offsets 5–28%): the video draws how long each key was held (median 108 ms) while
   the pedal-heavy audio sustains ~3× longer.
 
+## Third song: "Gymnopédie No. 1" (Satie, a Synthesia tutorial; the README's showcase)
+
+Added through the viewer's own add-song API, in one step. Public domain, so it illustrates the
+README.
+
+- First non-4/4 piece: **3/4 detected** automatically; key **D major** (Satie's own); ♩ = 68.
+  The score reads like the original: the alternating G/D bass, the chords, the melody.
+- **Answer key: 83.2% note F1** (ensemble; P 85.4%, R 81.2%, lag +78 ms). This tutorial is
+  another Synthesia variant: orange right hand (now mapped: blue = left, green/warm = right),
+  a dark-grey background, note names printed on the keys (the white-key row moved up to 78% of
+  the keyboard's height) and border lines at the frame edges (made two 0–1 px "keys"; now
+  dropped).
+- **Staff is not playing hand:** our hands score 72% here, below a fixed split (82%), because
+  Satie notates the chords in the upper staff although the left hand leaps up to play them,
+  and the video colours by playing hand. Our staff choice agrees with the printed original.
+- Its bar lines don't read reliably (every 4.41 s, which fits no bar length of the piece; the grey
+  background has its own faint lines), so this song's beat and rhythm rows in `eval` are
+  meaningless; the notes and the 3/4 bars are right.
+
 ### Gotchas found along the way (keep in mind for other videos)
 
 - White-key notes are drawn in **pastel** shades (light blue, saturation ~0.28) and black-key
@@ -352,12 +371,17 @@ quantized notes at every build (`notation/edits.py`), so re-running any stage ke
 6. Stretch: Web MIDI practice mode (wait-for-correct-notes), video hand hints, Demucs for
    non-solo recordings.
 
+## README images
+
+`scripts/readme_images.py` drives the running viewer in the installed Chrome (Playwright,
+`uv sync --extra docs`) and writes `docs/images/` (screenshots + the line-mode GIF).
+
 ## Setup (or just: `uv run pianoscribe add "<url>"`)
 
 ```bash
 brew install uv ffmpeg lilypond
 uv sync --extra transkun --extra bytedance
-# ByteDance checkpoint -> models/bytedance/ (see Stage A)
+uv run pianoscribe download-models  # ByteDance + Beat This! checkpoints -> models/
 uv run pianoscribe fetch "https://www.youtube.com/watch?v=UtGNBYegDBc" --song exile
 uv run pianoscribe transcribe exile --backend all
 uv run pianoscribe merge exile      # transkun onsets + ByteDance note ends -> notes/ensemble.mid

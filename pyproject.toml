@@ -24,6 +24,8 @@ dependencies = [
 # Transcription backends are optional so we can swap/compare them.
 transkun = ["transkun>=2.0.1"]
 bytedance = ["piano-transcription-inference>=0.0.6", "audioread>=3"]
+# README screenshots (scripts/readme_images.py), driving the installed Chrome.
+docs = ["playwright>=1.40"]
 
 [project.scripts]
 pianoscribe = "pianoscribe.cli:main"
