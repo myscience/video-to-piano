@@ -110,17 +110,21 @@ def cmd_merge(args: argparse.Namespace) -> None:
 def cmd_truth(args: argparse.Namespace) -> None:
     import json
 
-    from .eval.synthesia import measure, read_bar_lines, read_notes
+    from .eval.synthesia import STYLES, measure, read_bar_lines, read_notes
 
     song = Song.get(args.song)
     video = Path(args.video) if args.video else song.video
     t0 = time.perf_counter()
-    geo = measure(video)
+    geo = measure(video, STYLES[args.style])
+    print(f"  {len(geo.keys)} keys, hit line at row {geo.y_line}, bars scroll {geo.v:.2f} px/frame")
     truth = read_notes(video, geo)
     truth.save(song.truth_notes)
     hands = {h: sum(n.hand == h for n in truth.notes) for h in ("L", "R", None)}
     print(f"✓ {len(truth.notes)} notes (L={hands['L']}, R={hands['R']}, unknown={hands[None]}) "
           f"-> {song.truth_notes}")
+    if not geo.style.bar_lines:
+        print(f"  (no bar lines in the {geo.style.name} style) [{time.perf_counter() - t0:.0f}s]")
+        return
     bars = read_bar_lines(video, geo)
     song.truth_bars.write_text(json.dumps({"downbeats": [round(float(t), 4) for t in bars]}))
     print(f"✓ {len(bars)} bar lines (every {np.median(np.diff(bars)):.3f}s) -> {song.truth_bars} "
@@ -270,6 +274,8 @@ def main() -> None:
     p = sub.add_parser("truth", help="Answer key from a Synthesia-style video -> truth/notes.mid, truth/bars.json")
     p.add_argument("song")
     p.add_argument("--video", help="Defaults to library/<song>/source/video.mp4")
+    p.add_argument("--style", default="synthesia", choices=["synthesia", "pianox"],
+                   help="How the video draws notes (see eval/synthesia.py STYLES)")
     p.set_defaults(func=cmd_truth)
 
     p = sub.add_parser("eval", help="Score every notes/*.mid against a reference transcription")

@@ -39,6 +39,29 @@ class Key:
     black: bool
 
 
+@dataclass(frozen=True)
+class Style:
+    """How a falling-notes video draws things (see STYLES)."""
+
+    name: str
+    hit_line: str  # "red": Synthesia's red line | "keyboard": just above the white-key band
+    keys: str  # "detect": separators + black keys of an idle keyboard | "piano88": a full keyboard fitted to them
+    band: str  # where the tape is read: "above_line" (just above the hit line) | "top" (top of the screen)
+    lit: str  # "synthesia": pastel white-key / saturated black-key bars | "bright_red": bars red + bright
+    hands_by_color: bool  # blue = left, green = right
+    bar_lines: bool  # faint full-width lines at each downbeat
+
+
+STYLES = {
+    # Synthesia tutorials ('exile'): red hit line, bar colour = hand, bar lines.
+    "synthesia": Style("synthesia", "red", "detect", "above_line", "synthesia", True, True),
+    # PianoX-style covers ('never-gonna-give-you-up'): a filmed pianist's hands cover the keys, bar
+    # colour fades red -> purple -> blue with height (time, not hand) and blue particle effects
+    # swirl above the keyboard. At the very top bars are red and bright, the effects blue and dim.
+    "pianox": Style("pianox", "keyboard", "piano88", "top", "bright_red", False, False),
+}
+
+
 def probe(video: Path) -> VideoInfo:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets", "-show_entries",
@@ -104,6 +127,68 @@ def find_hit_line(frame: np.ndarray) -> int:
     return lower + int(np.argmax(redness[lower:]))
 
 
+def keyboard_band(frame: np.ndarray) -> tuple[int, int]:
+    """[top, bottom) rows of the white keys: the longest run of rows whose *brightest* pixels are
+    white (90th percentile). A row mean would dip where black keys and a pianist's hands cover
+    most of it and cut the band in two."""
+    rows = np.percentile(frame.mean(-1), 90, axis=1) > 100  # white keys ~120+ (dim), background ~45
+    lower = frame.shape[0] // 3
+    a, b = max(runs(rows[lower:]), key=lambda r: r[1] - r[0])
+    return lower + int(a), lower + int(b)
+
+
+WHITE_STEPS = (2, 1, 2, 2, 1, 2, 2)  # semitones from A, B, C, D, E, F, G to the next white key
+
+
+def piano88_keys(idle: np.ndarray, band: tuple[int, int], video: Path, info: VideoInfo,
+                 lit_rows: tuple[int, int], lit: Callable[[np.ndarray], np.ndarray]) -> list[Key]:
+    """A full 88-key keyboard (A0..C8, 52 white keys) fitted to the visible black keys, then each
+    key's column snapped onto the bars actually seen falling there.
+
+    For keyboards partly hidden by a pianist's hands: the fit needs only the black keys left
+    visible in the per-pixel median; real black keys sit a few px off the white-key boundaries,
+    so the final columns come from where the bars are.
+    """
+    top, bottom = band
+    lum = idle.mean(-1)
+    black = np.array([(a + b - 1) / 2 for a, b in runs(lum[top + int(0.33 * (bottom - top))] < 80)
+                      if 0.5 * idle.shape[1] / 52 < b - a < 0.95 * idle.shape[1] / 52])
+    n_white = 52
+    letters = "ABCDEFG"
+    after = [i for i in range(n_white - 1) if letters[i % 7] in "ACDFG"]  # white keys with a black to the right
+
+    def fit_error(x0: float, w: float) -> float:
+        predicted = x0 + (np.array(after) + 1) * w
+        return float(np.median(np.abs(black[:, None] - predicted[None, :]).min(axis=1)))
+
+    w0 = idle.shape[1] / n_white
+    _, x0, w = min((fit_error(x0, w), x0, w) for w in np.arange(0.95 * w0, 1.05 * w0, 0.02)
+                   for x0 in np.arange(-0.5 * w0, 0.5 * w0, 0.25))
+    pitch, keys = 21, []
+    for i in range(n_white):
+        keys.append(Key(x0 + (i + 0.5) * w, pitch, False))
+        if i in after:
+            keys.append(Key(x0 + (i + 1) * w, pitch + 1, True))
+        pitch += WHITE_STEPS[i % 7]
+
+    # Snap each key onto the centre of the bars falling on it (seen in ~80 frames).
+    occupancy = np.zeros(idle.shape[1])
+    for f in np.linspace(0.02 * info.n_frames, 0.98 * info.n_frames, 80, dtype=int):
+        occupancy += lit(read_frame(video, info, f)[lit_rows[0]:lit_rows[1]]).sum(axis=0)
+    peaks = [(a + b - 1) / 2 for a, b in runs(occupancy > 0.02 * occupancy.max())]
+    # Each bar column belongs to its single nearest key: a white key and its black neighbour are
+    # only half a key apart, and letting both snap to the same column read every note twice
+    # (79% of notes got a semitone twin).
+    xs = np.array([k.x for k in keys])
+    column = {}
+    for c in peaks:
+        i = int(np.argmin(np.abs(xs - c)))
+        if abs(xs[i] - c) < 0.35 * w and (i not in column or abs(c - xs[i]) < abs(column[i] - xs[i])):
+            column[i] = c
+    snapped = [Key(column.get(i, k.x), k.pitch, k.black) for i, k in enumerate(keys)]
+    return [k for k in snapped if 0 <= k.x < idle.shape[1]]
+
+
 def find_keys(frame: np.ndarray, hit_line: int) -> list[Key]:
     """Locate every key and name it from the black-key pattern. Frame must show an idle keyboard.
 
@@ -154,7 +239,7 @@ def find_keys(frame: np.ndarray, hit_line: int) -> list[Key]:
     return sorted(keys, key=lambda k: k.pitch)
 
 
-def calibrate(video: Path, info: VideoInfo, probes: int = 24) -> tuple[int, np.ndarray]:
+def calibrate(video: Path, info: VideoInfo, probes: int = 24, style: Style = STYLES["synthesia"]) -> tuple[int, np.ndarray]:
     """(hit line row, idle keyboard frame).
 
     Intros/outros use other layouts, so the hit line is the most common one across probes.
@@ -162,6 +247,10 @@ def calibrate(video: Path, info: VideoInfo, probes: int = 24) -> tuple[int, np.n
     per-pixel median over the matching probes is a clean, idle keyboard.
     """
     frames = [read_frame(video, info, i) for i in np.linspace(0, info.n_frames - 2, probes, dtype=int)]
+    if style.hit_line == "keyboard":  # fades at both ends are black: use the frames that show the keys
+        frames = [f for f in frames if f.mean() > 5]
+        idle = np.median(np.stack(frames), axis=0).astype(np.uint8)
+        return keyboard_band(idle)[0] - 1, idle
     lines = [find_hit_line(f) for f in frames]
     y = max(set(lines), key=lines.count)
     matching = [f for f, line in zip(frames, lines) if line == y]
@@ -192,10 +281,11 @@ def estimate_scroll(video: Path, info: VideoInfo, hit_line: int, gap: int = 10, 
 @dataclass(frozen=True)
 class Geometry:
     info: VideoInfo
-    y_line: int  # row of the red hit line
+    y_line: int  # row where bars hit the keyboard
     idle: np.ndarray  # idle keyboard frame
     keys: list[Key]
     v: float  # scroll speed, px/frame
+    style: Style = STYLES["synthesia"]
 
     @property
     def px_to_s(self) -> float:
@@ -203,10 +293,35 @@ class Geometry:
         return 1.0 / (self.v * self.info.fps)
 
 
-def measure(video: Path) -> Geometry:
+TOP_BAND = (60, 140)  # rows read by the "top" band style
+
+
+def lit_mask(style: Style, rgb: np.ndarray, black: np.ndarray | None = None) -> np.ndarray:
+    """Which samples show a note bar.
+
+    synthesia: white-key notes are pastel (saturation: light blue ~0.28, light green ~0.71),
+    black-key notes fully saturated (~1.0); grid lines, sparkles, background stay < ~0.07. A black
+    key's column is also covered by its white neighbours' full-width bars, so black keys only
+    count saturated pixels (`black`: per-key flags, broadcast over the last axis).
+    bright_red: at the top of a PianoX video bars are red and at full brightness (96% of coloured
+    pixels there, brightness 1.0); the particle effects are blue and dim (brightness ~0.44).
+    """
+    sat, val = colorfulness(rgb)
+    if style.lit == "bright_red":
+        r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+        return (sat > 0.4) & (val > 0.7) & (r > g) & (r > b)
+    min_sat = np.where(black, 0.75, 0.18) if black is not None else 0.18  # valley between 0.70 and 0.98
+    return (sat > min_sat) & (val > 0.35)
+
+
+def measure(video: Path, style: Style = STYLES["synthesia"]) -> Geometry:
     info = probe(video)
-    y_line, idle = calibrate(video, info)
-    return Geometry(info, y_line, idle, find_keys(idle, y_line), estimate_scroll(video, info, y_line))
+    y_line, idle = calibrate(video, info, style=style)
+    if style.keys == "piano88":
+        keys = piano88_keys(idle, keyboard_band(idle), video, info, TOP_BAND, lambda rgb: lit_mask(style, rgb))
+    else:
+        keys = find_keys(idle, y_line)
+    return Geometry(info, y_line, idle, keys, estimate_scroll(video, info, y_line), style)
 
 
 def stitch_tape(
@@ -223,7 +338,8 @@ def stitch_tape(
     """
     info, y_line, v = geo.info, geo.y_line, geo.v
     rows = int(np.ceil(v)) + 8  # a little overlap between consecutive frames' bands
-    y0 = y_line - margin_above_line - rows
+    y0 = TOP_BAND[0] if geo.style.band == "top" else y_line - margin_above_line - rows
+    check = geo.style.hit_line == "red"  # other styles: dark fades simply show no bars
 
     def redness(row: np.ndarray) -> float:
         return float((row[..., 0].astype(int) - row[..., 1:].mean(-1)).mean())
@@ -234,8 +350,8 @@ def stitch_tape(
     count = np.zeros(length, np.float32)
     f, valid = -1, 0
     # Stream down to the hit line too, to check it is on screen.
-    for f, band in enumerate(stream_band(video, info, y0, y_line - y0 + 2)):
-        if max(redness(band[-3]), redness(band[-2]), redness(band[-1])) < red_min:
+    for f, band in enumerate(stream_band(video, info, y0, y_line - y0 + 2 if check else rows)):
+        if check and max(redness(band[-3]), redness(band[-2]), redness(band[-1])) < red_min:
             continue
         valid += 1
         samples = np.asarray(sample(band[:rows]), np.float32)
@@ -249,7 +365,7 @@ def stitch_tape(
         count[lo : base + 1] += 1
     if f + 1 != info.n_frames:
         raise RuntimeError(f"Streamed {f + 1} frames but the video has {info.n_frames}")
-    if tape is None or valid < 0.5 * info.n_frames:
+    if tape is None or (check and valid < 0.5 * info.n_frames):
         raise RuntimeError(f"Only {valid}/{info.n_frames} frames show the hit line; is this a Synthesia video?")
     return tape / np.maximum(count, 1).reshape(-1, *[1] * (tape.ndim - 1))
 
@@ -274,14 +390,9 @@ def read_notes(
     cols = np.array([np.arange(round(k.x) - 2, round(k.x) + 3) for k in keys]).clip(0, geo.info.width - 1)
     tape = stitch_tape(video, geo, lambda band: band[:, cols].mean(axis=2))  # (length, keys, 3)
 
-    # White-key notes are drawn in pastel shades (saturation: light blue ~0.28, light green ~0.71)
-    # and black-key notes fully saturated (~1.0); grid lines, sparkles, background stay < ~0.07.
-    # A black key's column is also covered by its white neighbours' full-width bars, so black
-    # keys only count saturated pixels.
-    sat, val = colorfulness(tape)
-    min_sat = np.where([k.black for k in keys], 0.75, 0.18)  # valley between the 0.70 and 0.98 modes
-    lit = (sat > min_sat) & (val > 0.35)
+    lit = lit_mask(geo.style, tape, np.array([k.black for k in keys]))
     lit[1:-1] |= lit[:-2] & lit[2:]  # heal single-pixel compression holes
+    _, val = colorfulness(tape)
 
     notes = []
     for k, key in enumerate(keys):
@@ -293,9 +404,11 @@ def read_notes(
                 sa, sb = a + sa, a + sb
                 if sb - sa < min_px:
                     continue
-                r, g, bl = tape[sa:sb, k].mean(axis=0)
-                hue = "blue" if bl > max(r, g) else "green" if g > max(r, bl) else "red"
-                notes.append(NoteEvent(key.pitch, sa * geo.px_to_s, sb * geo.px_to_s, 80, colors.get(hue)))
+                hand = None
+                if geo.style.hands_by_color:
+                    r, g, bl = tape[sa:sb, k].mean(axis=0)
+                    hand = colors.get("blue" if bl > max(r, g) else "green" if g > max(r, bl) else "red")
+                notes.append(NoteEvent(key.pitch, sa * geo.px_to_s, sb * geo.px_to_s, 80, hand))
     return Transcription(notes)
 
 

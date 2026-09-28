@@ -287,10 +287,23 @@ quantized notes at every build (`notation/edits.py`), so re-running any stage ke
   here, so the grid was checked by **grid fit**: with the DP, 100% of onsets fall within 1/16 beat
   of the tracked 16th grid (median 0.013 beats) at tightness 10–300; the performance is steady
   (±0.6 BPM), so it didn't test rubato hard. Key estimate D♭ major.
-- The video isn't an answer key yet: bar colours encode time-to-hit (red → purple → blue), not
-  hands; blue particle effects swirl above the hit line; the player's hands cover the keys.
-  Reading it needs a brightness (not saturation) test, a band away from the effects, and key
-  positions from the bars themselves (it's a full 88-key keyboard).
+- **The video as an answer key** (`pianoscribe truth <song> --style pianox`). This style differs
+  from Synthesia: bar colour encodes time-to-hit (red → purple → blue), not hand; blue particle
+  effects swirl above the hit line; the pianist's hands cover the keys. So the reader:
+  - finds the keyboard by rows whose *90th-percentile* brightness is white (row means dip under
+    black keys and hands); the hit line is just above it;
+  - fits a full 88-key layout to the black keys still visible in the per-pixel median (white
+    37.34 px, residual 2.8 px), then snaps each key onto the bar columns seen falling on it,
+    **one column per key** (letting a white key and its black neighbour snap to the same column
+    read 79% of the notes twice);
+  - reads the tape at the *top* of the screen, where bars are red and at full brightness while
+    the effects are blue and dim (96% vs 4% of coloured pixels).
+- **Result on a real performance: 86.2% note F1** (ensemble; P 88.5%, R 84.0%), octave right,
+  audio/video lag +88 ms. Two caveats make it a slight *under*-estimate: ~10% of the video's
+  notes still have a semitone twin (two key pairs whose bars glow into each other; dropping the
+  dimmer twin didn't help, both read at full brightness), and note *ends* aren't comparable here
+  (F1 with offsets 5–28%): the video draws how long each key was held (median 108 ms) while
+  the pedal-heavy audio sustains ~3× longer.
 
 ### Gotchas found along the way (keep in mind for other videos)
 
@@ -333,8 +346,9 @@ quantized notes at every build (`notation/edits.py`), so re-running any stage ke
 4. ✅ **Viewer:** FastAPI + Verovio, synced to the original audio through the beat map. Next:
    hide a hand, practice mode with a MIDI keyboard.
 5. ✅ **Add songs** from the viewer (search / link / upload) and ✅ **correct scores** in it.
-   Next: video answer key for filmed-pianist videos, faster previews (only re-engrave the bars
-   that changed), hands-separate synth playback, MIDI keyboard wait mode, fingering.
+   ✅ Video answer key for filmed-pianist (PianoX-style) videos. Next: faster previews (only
+   re-engrave the bars that changed), hands-separate synth playback, MIDI keyboard wait mode,
+   fingering.
 6. Stretch: Web MIDI practice mode (wait-for-correct-notes), video hand hints, Demucs for
    non-solo recordings.
 
