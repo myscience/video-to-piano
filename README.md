@@ -26,7 +26,9 @@ opens it in a practice viewer that follows the original recording note by note.
 - **Helps you practice.** Notes light up as the recording plays; pages that follow or one
   endless scrolling line; bar loops; slow down without changing pitch; click any note to jump.
 - **Makes corrections easy.** Fix a pitch, hand, length or timing right in the viewer, with a
-  live preview. Corrections are kept apart and replayed on every rebuild, so they're never lost.
+  live preview in well under a second. Or fix the whole score: key, transpose, tempo mark,
+  meter, barlines, half/double time. Corrections are kept apart and replayed on every rebuild,
+  so they're never lost.
 - **Adds songs in one step.** Search YouTube, paste a link or upload a file from the viewer (or
   run `pianoscribe add` in a terminal).
 

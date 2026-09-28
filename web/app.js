@@ -293,6 +293,7 @@ async function runPreview() {
     if (seq !== S.previewSeq) return; // a newer edit is already on its way
     Object.assign(S, { sync: v.sync, notes: v.notes, svg: { pages: v.pages, line: v.line } });
     await keepingPlace(render);
+    updateEditor();
     busy(v.skipped?.length ? `${v.skipped.length} change(s) no longer match a note` : "");
   } catch (err) {
     if (seq === S.previewSeq) busy(`Preview failed: ${err.message.slice(0, 120)}`);
@@ -340,6 +341,34 @@ async function revertAll() {
   busy("All corrections removed");
 }
 
+// Score-wide settings: key, transpose, tempo mark, beat factor, meter, barline shift.
+const KEYS = [["C", 0, "major"], ["G", 7, "major"], ["D", 2, "major"], ["A", 9, "major"], ["E", 4, "major"],
+              ["B", 11, "major"], ["G♭", 6, "major"], ["D♭", 1, "major"], ["A♭", 8, "major"], ["E♭", 3, "major"],
+              ["B♭", 10, "major"], ["F", 5, "major"], ["A", 9, "minor"], ["E", 4, "minor"], ["B", 11, "minor"],
+              ["F♯", 6, "minor"], ["C♯", 1, "minor"], ["G♯", 8, "minor"], ["E♭", 3, "minor"], ["B♭", 10, "minor"],
+              ["F", 5, "minor"], ["C", 0, "minor"], ["G", 7, "minor"], ["D", 2, "minor"]];
+let tab = "note";
+
+function setting(e) {
+  if (!S) return;
+  S.pending.push(e);
+  S.history.push(S.sel);
+  updateEditor();
+  schedulePreview();
+}
+
+function showSettings() {
+  const st = S.sync.settings || {};
+  $("setKey").innerHTML = `<option value="auto">Auto (${esc(st.key ? "estimated" : S.sync.key || "estimated")})</option>` +
+    KEYS.map(([n, t, m]) => `<option value="${t}:${m}">${n} ${m}</option>`).join("");
+  $("setKey").value = st.key ? `${st.key[0]}:${st.key[1]}` : "auto";
+  $("setTranspose").textContent = (st.transpose > 0 ? "+" : "") + (st.transpose || 0);
+  $("setBpm").value = st.bpm_mark ?? Math.round(S.sync.bpm);
+  $("setMeter").value = String(S.sync.beats_per_bar);
+  for (const b of $("setBeat").children) b.classList.toggle("on", Number(b.dataset.factor) === (st.beat ?? 1));
+  $("setHint").textContent = st.transpose ? "Transposed: the recording still plays in the original key." : "";
+}
+
 function busy(text) { $("edBusy").textContent = text; }
 
 function updateEditor() {
@@ -349,10 +378,15 @@ function updateEditor() {
   if (S?.pending.length) $("editToggle").dataset.pending = S.pending.length;
   else delete $("editToggle").dataset.pending;
   if (!S) return;
+  $("tabNote").classList.toggle("on", tab === "note");
+  $("tabScore").classList.toggle("on", tab === "score");
+  $("scoreTools").hidden = tab !== "score";
+  document.querySelector(".ed-tools").hidden = tab !== "note";
+  if (tab === "score") showSettings();
   const sel = S.sel;
   const bpb = S.sync.beats_per_bar;
-  $("edNote").textContent = sel
-    ? `${noteName(sel.pitch)} · ${sel.hand === "L" ? "left" : "right"} hand · bar ${Math.floor(sel.q / bpb) + 1}, beat ${Math.floor((sel.q % bpb) * 4) / 4 + 1}`
+  $("edNote").textContent = tab === "score" ? `${S.sync.key} · ${bpb}/4 · ♩ = ${(S.sync.settings || {}).bpm_mark ?? Math.round(S.sync.bpm)}`
+    : sel ? `${noteName(sel.pitch)} · ${sel.hand === "L" ? "left" : "right"} hand · bar ${Math.floor(sel.q / bpb) + 1}, beat ${Math.floor((sel.q % bpb) * 4) / 4 + 1}`
     : "Click a note to select it";
   for (const b of document.querySelectorAll(".ed-tools button")) b.disabled = !sel;
   for (const b of document.querySelectorAll('.ed-tools [data-op="hand"]')) b.classList.toggle("on", !!sel && b.dataset.hand === sel.hand);
@@ -537,6 +571,21 @@ $("edUndo").addEventListener("click", undoEdit);
 $("edDiscard").addEventListener("click", discardEdits);
 $("edSave").addEventListener("click", saveEdits);
 $("edRevert").addEventListener("click", revertAll);
+$("tabNote").addEventListener("click", () => { tab = "note"; updateEditor(); });
+$("tabScore").addEventListener("click", () => { tab = "score"; updateEditor(); });
+$("setKey").addEventListener("change", (e) => {
+  const [tonic, mode] = e.target.value.split(":");
+  setting(e.target.value === "auto" ? { op: "key", auto: true } : { op: "key", tonic: Number(tonic), mode });
+});
+$("setBpm").addEventListener("change", (e) => setting({ op: "tempo", bpm: Number(e.target.value) || null }));
+$("setMeter").addEventListener("change", (e) => setting({ op: "meter", beats: Number(e.target.value) }));
+for (const b of $("setBeat").children) b.addEventListener("click", () => setting({ op: "beat", factor: Number(b.dataset.factor) }));
+for (const b of document.querySelectorAll("[data-set]")) {
+  b.addEventListener("click", () => {
+    const d = Number(b.dataset.delta), st = S?.sync.settings || {};
+    setting(b.dataset.set === "transpose" ? { op: "transpose", semitones: d } : { op: "downbeat", shift: (st.downbeat || 0) + d });
+  });
+}
 for (const b of document.querySelectorAll(".ed-tools button")) {
   b.addEventListener("click", () => edit(b.dataset.op, { delta: Number(b.dataset.delta), hand: b.dataset.hand }));
 }

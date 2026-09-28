@@ -11,6 +11,16 @@ after the edits before it. Clicking any part of a tied note therefore finds the 
     {"op": "move",   "target": T, "delta": -3}           ticks; the whole note moves
     {"op": "delete", "target": T}
     {"op": "add",    "pitch": 64, "start": 480, "end": 486, "hand": "R"}
+    {"op": "transpose", "semitones": 2}              every note, from here on in the sequence
+
+Score-wide settings (the last of each kind wins; see `settings`):
+
+    {"op": "key",      "tonic": 8, "mode": "major"}   key signature and spelling (same notes)
+    {"op": "key",      "auto": true}                  back to the estimated key
+    {"op": "tempo",    "bpm": 116}                    the printed tempo mark
+    {"op": "beat",     "factor": 2}                   2: the tracker found half speed; 0.5: double
+    {"op": "meter",    "beats": 3}                    beats per bar
+    {"op": "downbeat", "shift": 1}                    move every barline by whole beats
 """
 
 from __future__ import annotations
@@ -23,7 +33,29 @@ from ..rhythm.quantize import TICKS_PER_BEAT, QuantizedNote
 from ..transcribe.base import Hand
 
 STEP = TICKS_PER_BEAT // 4  # a 16th: the grid every edit moves on
-OPS = {"pitch", "hand", "length", "move", "delete", "add"}
+OPS = {"pitch", "hand", "length", "move", "delete", "add", "transpose"}
+SETTINGS = {"key", "tempo", "beat", "meter", "downbeat"}
+
+
+def settings(edits: list[dict]) -> dict:
+    """The score-wide settings in effect: {"key": (tonic, mode) | None, "bpm": float | None,
+    "beat": factor, "meter": beats | None, "downbeat": shift, "transpose": total semitones}."""
+    out = {"key": None, "bpm": None, "beat": 1.0, "meter": None, "downbeat": 0, "transpose": 0}
+    for e in edits:
+        op = e.get("op")
+        if op == "key":
+            out["key"] = None if e.get("auto") else (int(e["tonic"]) % 12, e.get("mode", "major"))
+        elif op == "tempo":
+            out["bpm"] = float(e["bpm"]) if e.get("bpm") else None
+        elif op == "beat":
+            out["beat"] = float(e["factor"])
+        elif op == "meter":
+            out["meter"] = int(e["beats"]) if e.get("beats") else None
+        elif op == "downbeat":
+            out["downbeat"] = int(e["shift"])
+        elif op == "transpose":
+            out["transpose"] += int(e["semitones"])
+    return out
 
 
 def load(path: Path) -> list[dict]:
@@ -51,6 +83,12 @@ def apply(notes: list[QuantizedNote], edits: list[dict]) -> tuple[list[Quantized
     skipped = []
     for e in edits:
         op = e.get("op")
+        if op in SETTINGS:  # score-wide, handled by `settings`
+            continue
+        if op == "transpose":
+            d = int(e["semitones"])
+            work = [[replace(n, pitch=min(108, max(21, n.pitch + d))), h] for n, h in work]
+            continue
         if op == "add":
             start, end = int(e["start"]), int(e["end"])
             hand = e.get("hand")

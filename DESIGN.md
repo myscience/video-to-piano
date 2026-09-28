@@ -277,8 +277,20 @@ quantized notes at every build (`notation/edits.py`), so re-running any stage ke
 - In the viewer, **✎ Edit (E)**: click a note, then ▲▼ (⇧ octave), L/R, −/+ length, ◀▶ move,
   ＋ note, delete, all on the keyboard too. The note is marked pending instantly and the
   re-engraved preview (saved + pending edits, rendered but not written) replaces the page in
-  ~3 s with the selection following the note. Undo (⌘Z), Discard, Save (⌘S: append to
-  `edits.json`, rebuild MusicXML, PDF and viewer, ~6 s), Revert all.
+  ~0.6 s with the selection following the note. Undo (⌘Z), Discard, Save (⌘S: append to
+  `edits.json`, rebuild MusicXML, PDF and viewer, ~2.5 s), Revert all.
+- **Score-wide settings** (the editor's *Score* tab) are edits too, folded by `settings()` and
+  applied *before* quantization, so every note edit stays attached to the right note:
+  - *key*: override the estimated key signature (spelling only, same pitches) or back to auto;
+  - *transpose* ±semitones: moves every note (in sequence with the note edits, so earlier edits
+    still find their notes at the old pitch) and re-estimates the key; the recording is not
+    pitch-shifted, the viewer says so;
+  - *tempo mark*: only the printed ♩ = N (the cursor follows the tracked beats regardless);
+  - *beat ½× / 2×*: fixes the tracker's classic octave errors by keeping every other beat
+    (starting from the downbeat's parity, so bars stay aligned) or inserting midpoints;
+  - *meter* 2/3/4 and *barlines ◀▶*: re-slice the same beats into bars (`rhythm.beats.transform`),
+    the fix for a wrong downbeat or a 3-vs-4 mistake. Ticks are beat-relative, so the grid
+    transform happens first and note edits made afterwards target the new grid.
 
 ## Second song: "Never Gonna Give You Up" (PianoX, a filmed pianist)
 
@@ -375,9 +387,9 @@ README.
 4. ✅ **Viewer:** FastAPI + Verovio, synced to the original audio through the beat map. Next:
    hide a hand, practice mode with a MIDI keyboard.
 5. ✅ **Add songs** from the viewer (search / link / upload) and ✅ **correct scores** in it.
-   ✅ Video answer key for filmed-pianist (PianoX-style) videos. Next: faster previews (only
-   re-engrave the bars that changed), hands-separate synth playback, MIDI keyboard wait mode,
-   fingering.
+   ✅ Video answer key for filmed-pianist (PianoX-style) videos. ✅ Faster previews (own
+   MusicXML writer, 4.3 s → 0.56 s). ✅ Key, transpose, tempo, beat, meter and barline edits.
+   Next: library sidebar, hands-separate synth playback, MIDI keyboard wait mode, fingering.
 6. Stretch: Web MIDI practice mode (wait-for-correct-notes), video hand hints, Demucs for
    non-solo recordings.
 

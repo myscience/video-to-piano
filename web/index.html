@@ -51,8 +51,31 @@
 
   <aside id="editor" class="editor" hidden aria-label="Correct the score">
     <div class="ed-row">
+      <span class="segmented" role="tablist" aria-label="What to correct">
+        <button id="tabNote" class="on" role="tab" title="Correct single notes">Note</button>
+        <button id="tabScore" role="tab" title="Key, transpose, tempo, meter, barlines">Score</button>
+      </span>
       <strong id="edNote">Click a note to select it</strong>
       <span id="edBusy" class="muted"></span>
+    </div>
+    <div class="ed-row ed-score" id="scoreTools" hidden>
+      <label>Key <select id="setKey" title="Key signature and spelling (same notes)"></select></label>
+      <span class="ed-group"><span class="muted">Transpose</span>
+        <button data-set="transpose" data-delta="-1" title="Down a semitone">−</button>
+        <span id="setTranspose" class="readout">0</span>
+        <button data-set="transpose" data-delta="1" title="Up a semitone">+</button></span>
+      <label>Tempo ♩ = <input id="setBpm" type="number" min="20" max="300" step="1" title="The printed tempo mark"></label>
+      <span class="ed-group"><span class="muted">Beat</span>
+        <span class="segmented" id="setBeat">
+          <button data-factor="0.5" title="The tracker counted twice too many beats: halve them">½×</button>
+          <button data-factor="1" title="As tracked">1×</button>
+          <button data-factor="2" title="The tracker counted half the beats: double them">2×</button>
+        </span></span>
+      <label>Meter <select id="setMeter"><option value="2">2/4</option><option value="3">3/4</option><option value="4">4/4</option></select></label>
+      <span class="ed-group"><span class="muted">Barlines</span>
+        <button data-set="downbeat" data-delta="-1" title="Move every barline a beat earlier">◀</button>
+        <button data-set="downbeat" data-delta="1" title="Move every barline a beat later">▶</button></span>
+      <span id="setHint" class="muted"></span>
     </div>
     <div class="ed-row ed-tools">
       <span class="ed-group"><span class="muted">Pitch</span>

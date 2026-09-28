@@ -200,3 +200,22 @@ def track_beats(act: Activations, beats_per_bar: int | None = None,
     meters = (beats_per_bar,) if beats_per_bar else (4, 3)
     bars = choose_bars(strength, meters)
     return BeatGrid(beats, beats[bars.phase :: bars.beats_per_bar]), bars
+
+
+def transform(grid: BeatGrid, factor: float = 1.0, meter: int | None = None, shift: int = 0) -> BeatGrid:
+    """Correct a tracked grid: factor 2 adds a beat between each pair (the tracker locked onto half
+    speed), 0.5 keeps every other beat (double speed); `meter` beats per bar; barlines moved by
+    `shift` beats. Bars are re-laid from the first downbeat."""
+    beats = np.asarray(grid.beats, float)
+    first = int(np.searchsorted(beats, grid.downbeats[0])) if len(grid.downbeats) else 0
+    meter = meter or grid.beats_per_bar
+    if factor == 2:
+        mids = (beats[:-1] + beats[1:]) / 2
+        beats = np.sort(np.concatenate([beats, mids]))
+        first *= 2
+        meter = meter if meter != grid.beats_per_bar else grid.beats_per_bar
+    elif factor == 0.5:
+        beats = beats[first % 2 :: 2]
+        first //= 2
+    first = (first + shift) % meter
+    return BeatGrid(beats, beats[first::meter])

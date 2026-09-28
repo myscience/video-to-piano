@@ -125,15 +125,21 @@ def _score(song: Song, notes_name: str | None, pending: list[dict], voices: bool
     from .rhythm.quantize import quantize, quantize_pedal
     from .transcribe.base import Transcription
 
-    grid = BeatGrid.load(song.beats)
+    from .notation.musicxml import Key
+    from .rhythm.beats import transform
+
+    edits = E.load(song.edits) + list(pending)
+    st = E.settings(edits)
+    grid = transform(BeatGrid.load(song.beats), st["beat"], st["meter"], st["downbeat"])
     t = Transcription.load(song.notes(notes_name or default_notes(song)))
     start, end = song_span(t)
     t = Transcription([n for n in t.notes if start <= n.onset <= end], t.pedal)
-    q, forced, skipped = E.apply(quantize(t, grid), E.load(song.edits) + list(pending))
+    q, forced, skipped = E.apply(quantize(t, grid), edits)
     guess_title, guess_composer = song.credits()
-    eng = build_score(q, decode_hands(q, forced=forced), grid.beats_per_bar, grid.tempo,
-                      title or guess_title, composer or guess_composer,
-                      pedal=quantize_pedal(t, grid), voices=voices)
+    eng = build_score(q, decode_hands(q, forced=forced), grid.beats_per_bar, st["bpm"] or grid.tempo,
+                      title or guess_title, composer or guess_composer, pedal=quantize_pedal(t, grid),
+                      voices=voices, key=Key(*st["key"]) if st["key"] else None)
+    eng.settings = st | {"bpm_mark": round(st["bpm"] or grid.tempo), "meter": grid.beats_per_bar}
     info = Built(eng.key.name, len(q), eng.voiced, (start, end), skipped_edits=skipped)
     return eng, grid, info
 
@@ -141,7 +147,8 @@ def _score(song: Song, notes_name: str | None, pending: list[dict], voices: bool
 def _sync(song: Song, grid, eng, pages: int) -> dict:
     """How the viewer maps score positions (quarters from bar 1) to recording time."""
     title, composer = song.credits()
-    return {"key_sharps": eng.key.sharps, "key": eng.key.name, "beats": [round(float(b), 4) for b in grid.beats],
+    return {"key_sharps": eng.key.sharps, "key": eng.key.name, "key_tonic": eng.key.tonic, "key_mode": eng.key.mode,
+            "settings": getattr(eng, "settings", {}), "beats": [round(float(b), 4) for b in grid.beats],
             "first_downbeat": int(np.searchsorted(grid.beats, grid.downbeats[0])),
             "shift_beats": eng.shift_beats, "beats_per_bar": grid.beats_per_bar, "bpm": round(grid.tempo, 2),
             "pages": pages, "title": title, "composer": composer}
