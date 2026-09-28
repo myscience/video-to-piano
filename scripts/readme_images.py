@@ -88,7 +88,7 @@ def main() -> None:
         page.keyboard.press("e")
 
         # 4. Adding a song: YouTube search results and the credits form.
-        page.click("#addSong")
+        page.evaluate("document.getElementById('addSong').click()")  # it lives in the (closed) library sidebar
         page.fill("#addQuery", args.search)
         page.click("#addGo")
         page.wait_for_selector("#addResults li[data-i]", timeout=30000)

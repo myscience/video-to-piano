@@ -30,7 +30,9 @@ opens it in a practice viewer that follows the original recording note by note.
   meter, barlines, half/double time. Corrections are kept apart and replayed on every rebuild,
   so they're never lost.
 - **Adds songs in one step.** Search YouTube, paste a link or upload a file from the viewer (or
-  run `pianoscribe add` in a terminal).
+  run `pianoscribe add` in a terminal). Your scores wait on a shelf, each a little deck of its
+  pages that fans out on hover; open one and it grows to full screen while the others fly into
+  a sidebar.
 
 ## The practice viewer
 
@@ -39,7 +41,7 @@ opens it in a practice viewer that follows the original recording note by note.
 | ![Pages view with the playing notes highlighted](docs/images/viewer.png) | ![Editing a note: pitch, hand, length, timing](docs/images/editing.png) | ![Adding a song from a YouTube search](docs/images/add-song.png) |
 
 Keyboard: <kbd>Space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> one bar · <kbd>[</kbd>/<kbd>]</kbd>
-loop · <kbd>V</kbd> pages/line · <kbd>E</kbd> edit (then <kbd>↑</kbd>/<kbd>↓</kbd> pitch,
+loop · <kbd>V</kbd> pages/line · <kbd>B</kbd> library · <kbd>E</kbd> edit (then <kbd>↑</kbd>/<kbd>↓</kbd> pitch,
 <kbd>L</kbd>/<kbd>R</kbd> hand, <kbd>+</kbd>/<kbd>−</kbd> length, <kbd>⌘Z</kbd>, <kbd>⌘S</kbd>).
 Run it with `--host 0.0.0.0` and open it on an iPad on the music stand.
 

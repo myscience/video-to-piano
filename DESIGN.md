@@ -253,6 +253,21 @@ Verovio (rendered once on the server: no WASM in the browser), plus `sync.json`.
   download (served with Range support, so seeking works).
 - The viewer's engraving is Verovio's and the PDF's is LilyPond's: same notes, slightly
   different layout.
+- **The library.** The landing page (no `#song` in the address) is a *shelf*: every score as a
+  small deck of its first pages (the viewer's own `page-N.svg` as images, so nothing extra is
+  rendered); on hover the pages behind fan out. Opening one is a View Transition: elements
+  sharing a `view-transition-name` (set from JS just for the move, then cleared) morph from
+  their old box to their new one. The deck's page 1 grows into the score, its back pages
+  into pages 2 and 3, the other decks fly into the sidebar's cards while the sidebar slides in;
+  half a second later the sidebar steps aside, so you've seen where the scores went. Back
+  (▦ All, or the browser's Back) runs it in reverse. Details that mattered: transition groups
+  are stacked with `z-index` (pages < sidebar < flying cards), a page is only captured where it
+  was on screen (its old snapshot fades out fast), CSS transitions are off during a morph
+  (the new layout must be at its end state when captured), hovering a deck prefetches the
+  song, and browsers without the API (or with reduced motion) just swap.
+- The sidebar (☰ or B) lists the same cards; it closes when a song is picked or starts playing,
+  and doesn't come back by itself on pause. Wide screens push the score aside, narrow ones
+  (an iPad on the music stand) slide it over.
 
 ## Adding songs
 
@@ -389,7 +404,8 @@ README.
 5. ✅ **Add songs** from the viewer (search / link / upload) and ✅ **correct scores** in it.
    ✅ Video answer key for filmed-pianist (PianoX-style) videos. ✅ Faster previews (own
    MusicXML writer, 4.3 s → 0.56 s). ✅ Key, transpose, tempo, beat, meter and barline edits.
-   Next: library sidebar, hands-separate synth playback, MIDI keyboard wait mode, fingering.
+   ✅ Library: a shelf of decks as the landing page and a sidebar, with animated transitions.
+   Next: hands-separate synth playback, MIDI keyboard wait mode, fingering.
 6. Stretch: Web MIDI practice mode (wait-for-correct-notes), video hand hints, Demucs for
    non-solo recordings.
 

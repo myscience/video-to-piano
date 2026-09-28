@@ -6,6 +6,7 @@ Run with `pianoscribe serve` (add `--host 0.0.0.0` to open it from an iPad on th
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import tempfile
@@ -45,15 +46,21 @@ def _file(path: Path | None) -> FileResponse:
 
 @app.get("/api/songs")
 def songs() -> list[dict]:
-    """Songs that have a rendered viewer."""
+    """Songs that have a rendered viewer, with what the library cards show."""
     out = []
     for d in sorted(p for p in LIBRARY.iterdir() if p.is_dir() and SAFE.match(p.name)):
-        if (d / "score" / "view" / "sync.json").is_file():
+        view = d / "score" / "view"
+        if (view / "sync.json").is_file():
             song = Song(d.name, d)
             title, composer = song.credits()
+            sync = json.loads((view / "sync.json").read_text())
             out.append({"slug": d.name, "title": title or d.name, "composer": composer,
-                        "edits": len(E.load(d / "score" / "edits.json"))})
-    return out
+                        "edits": len(E.load(d / "score" / "edits.json")),
+                        "key": sync.get("key"), "meter": sync.get("beats_per_bar"), "pages": sync.get("pages", 1),
+                        "bpm": round(sync.get("settings", {}).get("bpm_mark") or sync.get("bpm") or 0),
+                        "duration": round(sync["beats"][-1]) if sync.get("beats") else None,
+                        "version": int((view / "page-1.svg").stat().st_mtime) if (view / "page-1.svg").exists() else 0})
+    return sorted(out, key=lambda s: s["title"].casefold())
 
 
 @app.get("/api/songs/{slug}/view/{name}")

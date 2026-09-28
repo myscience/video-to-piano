@@ -47,16 +47,243 @@ const barOf = (q) => Math.floor(q / S.sync.beats_per_bar);
 // ---- loading -------------------------------------------------------------------------------
 
 async function loadSongs(select = null) {
-  const songs = await (await fetch("/api/songs")).json();
-  const picker = $("song");
-  picker.innerHTML = songs.map((s) => `<option value="${s.slug}">${esc(s.title)}</option>`).join("");
-  if (!songs.length) {
-    $("score").innerHTML = '<p class="muted empty">No songs yet: press <b>＋ Add</b> to transcribe one.</p>';
+  // Start-up: open the song in the address (#slug), or land on the shelf of every score.
+  await refreshLibrary();
+  const wanted = select ?? decodeURIComponent(location.hash.slice(1));
+  if (songs.some((s) => s.slug === wanted)) {
+    document.body.classList.remove("landing");
+    await loadSong(wanted);
+  } else {
+    document.body.classList.add("landing");
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+}
+
+// ---- the library: a sidebar of cards, and the shelf (the landing page) -----------------------
+
+let songs = [];
+let adding = null; // the song being added, shown as a card until it's ready: {label, message, status}
+let prefetched = null; // {slug, view}: the deck under the pointer, fetched before it's clicked
+const wide = () => matchMedia("(min-width: 1000px)").matches; // the library pushes the score aside
+const libraryOpen = () => document.body.classList.contains("lib-open");
+const onShelf = () => document.body.classList.contains("landing");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const img = (slug, page, version) =>
+  `<img src="/api/songs/${encodeURIComponent(slug)}/view/page-${page}.svg?v=${version}" alt="" loading="lazy" ` +
+  `onload="this.classList.add('ready')">`; // fade in once decoded: big SVG pages take a moment
+const facts = (s) => [s.meter && `${s.meter}/4`, s.key, s.duration && clock(s.duration), s.edits && `✎ ${s.edits}`]
+  .filter(Boolean).join(" · ");
+
+function setLibrary(open) {
+  document.body.classList.toggle("lib-open", open);
+  $("libToggle").setAttribute("aria-expanded", String(open));
+  $("libToggle").classList.toggle("on", open);
+}
+
+// When the library steps aside by itself (☰ and B always toggle it by hand): as soon as there is
+// music to read, i.e. a song was picked or starts playing. It doesn't come back on pause (pauses
+// are constant when practicing) nor at the end; the shelf is the landing page instead.
+function autoLibrary(event) {
+  if (event === "play" || event === "pick") setLibrary(false);
+}
+
+async function refreshLibrary() {
+  songs = await (await fetch("/api/songs")).json();
+  renderLibrary();
+  renderShelf();
+}
+
+function renderLibrary() {
+  $("songList").innerHTML = '<li id="addingCard" hidden></li>' + songs.map((s) => {
+    const here = s.slug === S?.slug;
+    return `<li><button class="card${here ? " current" : ""}" data-slug="${esc(s.slug)}"${here ? ' aria-current="true"' : ""}>
+      <span class="thumb">${img(s.slug, 1, s.version)}</span>
+      <span class="meta"><span class="title">${esc(s.title)}</span><span class="composer muted">${esc(s.composer || " ")}</span>
+        <span class="facts muted">${esc(facts(s))}</span></span>
+    </button></li>`;
+  }).join("");
+  renderAdding();
+}
+
+function markCurrent() {
+  // Outline the open song's card (without re-rendering: new <img>s would fade in all over again).
+  for (const card of $("songList").querySelectorAll(".card[data-slug]")) {
+    const here = card.dataset.slug === S?.slug;
+    card.classList.toggle("current", here);
+    if (here) card.setAttribute("aria-current", "true"); else card.removeAttribute("aria-current");
+  }
+}
+
+function renderShelf() {
+  // Each score as a deck: page 1 in front, the next two behind it (fanned out on hover).
+  $("shelfCount").textContent = songs.length ? `${songs.length} score${songs.length > 1 ? "s" : ""}` : "";
+  $("shelfEmpty").hidden = songs.length > 0 || !!adding;
+  $("decks").innerHTML = '<li id="addingDeck" hidden></li>' + songs.map((s) => `
+    <li><button class="deck" data-slug="${esc(s.slug)}">
+      <span class="sheets">
+        ${s.pages >= 3 ? `<span class="sheet b2">${img(s.slug, 3, s.version)}</span>` : ""}
+        ${s.pages >= 2 ? `<span class="sheet b1">${img(s.slug, 2, s.version)}</span>` : ""}
+        <span class="sheet front">${img(s.slug, 1, s.version)}</span>
+      </span>
+      <span class="caption"><span class="title">${esc(s.title)}</span><span class="composer muted">${esc(s.composer || " ")}</span>
+        <span class="facts muted">${esc(facts(s))}</span></span>
+    </button></li>`).join("");
+  renderAdding();
+}
+
+function renderAdding() {
+  // The song being transcribed, updated in place (re-rendering the lists would reload every page).
+  const show = !!adding && adding.status !== "done";
+  const mark = adding?.status === "error" ? "✕" : "♪";
+  const text = show ? `<span class="title">${esc(adding.label)}</span><span class="facts muted">${esc(adding.message)}</span>` : "";
+  for (const [id, html] of [
+    ["addingCard", `<div class="card pending" aria-live="polite"><span class="thumb">${mark}</span><span class="meta">${text}</span></div>`],
+    ["addingDeck", `<div class="deck pending" aria-live="polite"><span class="sheets"><span class="sheet front">${mark}</span></span>` +
+                   `<span class="caption">${text}</span></div>`],
+  ]) {
+    const li = $(id);
+    if (!li) continue;
+    li.hidden = !show;
+    li.innerHTML = show ? html : "";
+  }
+}
+
+function prefetch(slug) {
+  if (prefetched?.slug !== slug) prefetched = { slug, view: fetchView(slug) };
+  return prefetched.view;
+}
+
+// ---- moving between the shelf and a score ----------------------------------------------------
+
+const named = []; // elements given a view-transition-name for the current move
+
+function vtName(el, name, cls = "") {
+  if (!el) return;
+  el.style.viewTransitionName = name;
+  el.style.viewTransitionClass = cls;
+  named.push(el);
+}
+
+function clearNames() {
+  for (const el of named.splice(0)) el.style.viewTransitionName = el.style.viewTransitionClass = "";
+}
+
+async function transition(update, stagger = []) {
+  // Morph from the current screen to the one update() builds: the browser snapshots both and
+  // animates each named element from its old box to its new one. Without the API: just swap.
+  if (!document.startViewTransition || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    clearNames();
+    await update();
+    clearNames();
     return;
   }
-  const wanted = select ?? decodeURIComponent(location.hash.slice(1));
-  picker.value = songs.some((s) => s.slug === wanted) ? wanted : songs[0].slug;
-  await loadSong(picker.value);
+  // Staggered departures: each song's card leaves a moment after the previous one, not as a block.
+  $("vtStagger").textContent = stagger.flatMap((names, i) => names.map((n) =>
+    `::view-transition-group(${n}), ::view-transition-old(${n}), ::view-transition-new(${n}) { animation-delay: ${i * 50}ms; }`,
+  )).join("\n");
+  document.documentElement.classList.add("vt");
+  try {
+    const t = document.startViewTransition(async () => { clearNames(); await update(); });
+    t.ready.catch(() => {}); // skipped (e.g. the tab was hidden): the swap still happens, just without the morph
+    await t.finished;
+  } finally {
+    document.documentElement.classList.remove("vt");
+    clearNames();
+  }
+}
+
+function nameScore() {
+  // The score's first pages, or the line: where the chosen deck's sheets fly to (and back from).
+  const main = $("score");
+  const els = mode === "line" ? [main.querySelector(".stripwrap")] : [...main.querySelectorAll(".page")].slice(0, 3);
+  els.forEach((el, i) => vtName(el, i ? `score-page-${i + 1}` : "score-page"));
+}
+
+function nameDeck(deck, current) {
+  if (current) {
+    vtName(deck.querySelector(".front"), "score-page");
+    vtName(deck.querySelector(".b1"), "score-page-2");
+    vtName(deck.querySelector(".b2"), "score-page-3");
+  } else {
+    vtName(deck.querySelector(".sheets"), `thumb-${deck.dataset.slug}`, "fly clip");
+    vtName(deck.querySelector(".caption"), `meta-${deck.dataset.slug}`, "fly");
+  }
+}
+
+function nameCard(card) {
+  vtName(card.querySelector(".thumb"), `thumb-${card.dataset.slug}`, "fly clip");
+  vtName(card.querySelector(".meta"), `meta-${card.dataset.slug}`, "fly");
+}
+
+const flyers = (slug) => songs.filter((s) => s.slug !== slug).map((s) => [`thumb-${s.slug}`, `meta-${s.slug}`]);
+
+async function openFromShelf(slug, push = true) {
+  // The chosen deck grows into the score, its back pages become pages 2 and 3, the other decks fly
+  // into the library's cards; then the library steps aside, showing where the scores went.
+  const view = prefetch(slug);
+  if (push) history.pushState(null, "", `#${encodeURIComponent(slug)}`);
+  for (const deck of $("decks").querySelectorAll(".deck[data-slug]")) nameDeck(deck, deck.dataset.slug === slug);
+  await transition(async () => {
+    document.body.classList.remove("landing");
+    document.body.classList.add("intro");
+    setLibrary(true);
+    window.scrollTo(0, 0);
+    if (slug === S?.slug) { document.title = `${S.sync.title || slug} · pianoscribe`; relayout(); }
+    else await loadSong(slug, await view);
+    nameScore();
+    vtName($("library"), "library"); // slides in over the score, the cards landing in it
+    for (const card of $("songList").querySelectorAll(".card[data-slug]")) if (card.dataset.slug !== slug) nameCard(card);
+  }, flyers(slug));
+  prefetched = null;
+  await sleep(500);
+  if (document.body.classList.contains("intro")) autoLibrary("pick");
+  document.body.classList.remove("intro");
+}
+
+async function showShelf() {
+  // The way back: the score shrinks into its deck, the library's cards fly back to theirs.
+  if (editing) toggleEditing();
+  audio.pause();
+  prefetched = null;
+  const from = S && !onShelf() ? S.slug : null;
+  if (from) {
+    nameScore();
+    if (libraryOpen()) {
+      vtName($("library"), "library");
+      for (const card of $("songList").querySelectorAll(".card[data-slug]")) if (card.dataset.slug !== from) nameCard(card);
+    }
+  }
+  await transition(() => {
+    document.body.classList.add("landing");
+    document.body.classList.remove("intro");
+    setLibrary(false);
+    window.scrollTo(0, 0);
+    document.title = "pianoscribe";
+    for (const deck of $("decks").querySelectorAll(".deck[data-slug]")) nameDeck(deck, deck.dataset.slug === from);
+  }, from ? flyers(from) : []);
+}
+
+async function goToShelf() {
+  if (S?.pending.length && !confirm("Leave this song? Its unsaved changes will be lost.")) return;
+  if (S?.pending.length) await discardEdits();
+  history.pushState(null, "", location.pathname + location.search);
+  await showShelf();
+}
+
+async function openSong(slug) {
+  // From anywhere: animated from the shelf, directly from a song.
+  if (onShelf()) return openFromShelf(slug);
+  if (slug === S?.slug) return;
+  if (S?.pending.length && !confirm("Leave this song? Its unsaved changes will be lost.")) return;
+  await loadSong(slug);
+}
+
+function relayout() {
+  // The score's width changed (window resized, library opened or closed): re-measure what follow uses.
+  if (!S) return;
+  S.system = null;
+  S.lastQ = null;
+  if (mode === "line") S.anchors = lineAnchors();
 }
 
 async function fetchView(slug) {
@@ -73,13 +300,14 @@ async function fetchView(slug) {
   return { base, sync, notes, pages };
 }
 
-async function loadSong(slug) {
+async function loadSong(slug, view = null) {
   audio.pause();
-  const view = await fetchView(slug);
+  view ??= await fetchView(slug);
   const saved = (await (await fetch(`/api/songs/${encodeURIComponent(slug)}/edits`)).json()).saved.length;
   S = { slug, base: view.base, sync: view.sync, notes: view.notes, svg: { pages: view.pages, line: null },
         spans: [], byId: new Map(), active: new Set(), loop: { a: null, b: null }, system: null,
         anchors: null, lastQ: null, pending: [], history: [], sel: null, saved, previewSeq: 0 };
+  $("songTitle").textContent = S.sync.title || slug;
   $("credits").textContent = S.sync.composer || "";
   $("pdf").href = `/api/songs/${encodeURIComponent(slug)}/pdf`;
   document.title = `${S.sync.title || slug} · pianoscribe`;
@@ -87,6 +315,7 @@ async function loadSong(slug) {
   showLoop();
   await render();
   updateEditor();
+  markCurrent();
   audio.src = `/api/songs/${encodeURIComponent(slug)}/audio`;
   audio.addEventListener("loadedmetadata", () => { audio.currentTime = Math.max(0, tAt(0) - LEAD_IN); },
                          { once: true });
@@ -312,6 +541,7 @@ async function saveEdits() {
   S.pending = []; S.history = []; S.saved = res.saved;
   await reloadSaved();
   updateEditor();
+  refreshLibrary();
   busy(`Saved · rebuilt in ${res.seconds}s`);
 }
 
@@ -494,12 +724,24 @@ function watchJob(id, label) {
                               job.status === "queued" ? "Waiting for the previous song to finish…" : `${job.message}…`;
     $("jobStatus").textContent = job.status === "running" || job.status === "queued" ? `♪ ${label}: ${job.message}` :
                                  job.status === "done" ? `✓ ${label} is ready` : job.status === "error" ? `✕ ${label} failed` : "";
+    adding = { label, status: job.status, message: job.status === "queued" ? "waiting for the previous song…" :
+               job.status === "error" ? "failed" : `${job.message}…` };
     if (job.status === "done") {
       clearInterval(jobPoll);
       $("addMsg").textContent = "Ready!";
-      await loadSongs(job.result);
-      setTimeout(() => { if ($("addDialog").open) $("addDialog").close(); }, 900);
-    } else if (job.status === "error") clearInterval(jobPoll);
+      adding = null;
+      await refreshLibrary();
+      // Open the new song if the dialog is still up; otherwise just add its card (someone may be practicing).
+      if ($("addDialog").open) {
+        await sleep(800);
+        $("addDialog").close();
+        await openSong(job.result);
+      }
+    } else {
+      if (job.status === "error") clearInterval(jobPoll);
+      $("shelfEmpty").hidden = true;
+      renderAdding();
+    }
   };
   tick();
   jobPoll = setInterval(tick, 1500);
@@ -552,10 +794,36 @@ $("speed").addEventListener("change", (e) => { audio.playbackRate = Number(e.tar
 $("loopA").addEventListener("click", () => setLoop("a"));
 $("loopB").addEventListener("click", () => setLoop("b"));
 $("loopClear").addEventListener("click", clearLoop);
-$("song").addEventListener("change", async (e) => {
-  if (S?.pending.length && !confirm("Leave this song? Its unsaved changes will be lost.")) { e.target.value = S.slug; return; }
-  await loadSong(e.target.value);
+$("libToggle").addEventListener("click", () => setLibrary(!libraryOpen()));
+$("songList").addEventListener("click", async (e) => {
+  const card = e.target.closest(".card[data-slug]");
+  if (!card) return;
+  await openSong(card.dataset.slug);
+  autoLibrary("pick");
 });
+$("decks").addEventListener("click", (e) => {
+  const deck = e.target.closest(".deck[data-slug]");
+  if (deck) openFromShelf(deck.dataset.slug);
+});
+for (const type of ["pointerover", "focusin"]) {
+  $("decks").addEventListener(type, (e) => { const deck = e.target.closest(".deck[data-slug]"); if (deck) prefetch(deck.dataset.slug); });
+}
+$("toShelf").addEventListener("click", goToShelf);
+$("shelfAdd").addEventListener("click", openAdd);
+window.addEventListener("popstate", async () => {
+  // Back and forward between the shelf and songs.
+  const slug = decodeURIComponent(location.hash.slice(1));
+  if (S?.pending.length && slug !== S.slug) {
+    if (!confirm("Leave this song? Its unsaved changes will be lost.")) { history.pushState(null, "", `#${encodeURIComponent(S.slug)}`); return; }
+    await discardEdits();
+  }
+  if (!songs.some((s) => s.slug === slug)) { if (!onShelf()) await showShelf(); }
+  else if (onShelf()) await openFromShelf(slug, false);
+  else if (slug !== S?.slug) await loadSong(slug);
+});
+$("score").addEventListener("transitionend", (e) => { if (e.target === $("score") && e.propertyName === "margin-left") relayout(); });
+new ResizeObserver(([entry]) => document.documentElement.style.setProperty("--bar-h", `${entry.target.offsetHeight}px`))
+  .observe(document.querySelector(".bar"));
 $("follow").addEventListener("change", () => { if (S) { S.system = null; S.lastQ = null; } });
 $("modePages").addEventListener("click", () => setMode("pages"));
 $("modeLine").addEventListener("click", () => setMode("line"));
@@ -589,10 +857,10 @@ for (const b of document.querySelectorAll("[data-set]")) {
 for (const b of document.querySelectorAll(".ed-tools button")) {
   b.addEventListener("click", () => edit(b.dataset.op, { delta: Number(b.dataset.delta), hand: b.dataset.hand }));
 }
-window.addEventListener("resize", () => { if (S && mode === "line") { S.anchors = lineAnchors(); S.lastQ = null; } });
+window.addEventListener("resize", relayout);
 window.addEventListener("beforeunload", (e) => { if (S?.pending.length) e.preventDefault(); });
-audio.addEventListener("play", () => { $("play").textContent = "⏸"; $("play").setAttribute("aria-label", "Pause"); });
-audio.addEventListener("pause", () => { $("play").textContent = "▶"; $("play").setAttribute("aria-label", "Play"); });
+audio.addEventListener("play", () => { $("play").textContent = "⏸"; $("play").setAttribute("aria-label", "Pause"); autoLibrary("play"); });
+audio.addEventListener("pause", () => { $("play").textContent = "▶"; $("play").setAttribute("aria-label", "Play"); autoLibrary("pause"); });
 audio.addEventListener("ratechange", () => { audio.preservesPitch = true; });
 
 $("score").addEventListener("click", (e) => {
@@ -603,7 +871,7 @@ $("score").addEventListener("click", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if ((e.target instanceof Element && e.target.matches("select, input, textarea")) || $("addDialog").open) return;
+  if ((e.target instanceof Element && e.target.matches("select, input, textarea")) || $("addDialog").open || onShelf()) return;
   const mod = e.metaKey || e.ctrlKey;
   if (editing && mod && e.key.toLowerCase() === "z") { e.preventDefault(); undoEdit(); return; }
   if (editing && mod && e.key.toLowerCase() === "s") { e.preventDefault(); saveEdits(); return; }
@@ -618,7 +886,7 @@ document.addEventListener("keydown", (e) => {
   const actions = {
     " ": togglePlay, ArrowLeft: () => seekBar(-1), ArrowRight: () => seekBar(1),
     Home: () => $("restart").click(), "[": () => setLoop("a"), "]": () => setLoop("b"), Escape: clearLoop,
-    v: () => setMode(mode === "line" ? "pages" : "line"), e: toggleEditing,
+    v: () => setMode(mode === "line" ? "pages" : "line"), e: toggleEditing, b: () => setLibrary(!libraryOpen()),
     ...editKeys,
   };
   if (actions[e.key]) { e.preventDefault(); actions[e.key](); }

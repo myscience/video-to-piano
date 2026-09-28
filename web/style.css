@@ -45,8 +45,9 @@ body {
 }
 .group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 button, a#pdf { white-space: nowrap; }
-.song { flex: 1 1 260px; min-width: 0; }
-#credits { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song { flex: 1 1 260px; min-width: 0; flex-wrap: nowrap; }
+.now { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#libToggle { min-width: 38px; }
 .muted { color: var(--muted); }
 .readout { font-variant-numeric: tabular-nums; min-width: 3.2em; }
 
@@ -225,3 +226,160 @@ dialog#addDialog::backdrop { background: rgba(0, 0, 0, 0.35); }
   padding: 5px 8px;
 }
 #setHint { font-size: 13px; }
+
+/* ---- the library ------------------------------------------------------------------------- */
+:root { --lib-w: 300px; --bar-h: 55px; }
+.library {
+  position: fixed;
+  top: var(--bar-h);
+  bottom: 0;
+  left: 0;
+  z-index: 15;
+  width: min(var(--lib-w), 88vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition: transform 0.25s ease, visibility 0s linear 0.25s;
+}
+body.lib-open .library { transform: none; visibility: visible; transition: transform 0.25s ease; }
+body.intro .library { transition-duration: 0.5s; } /* stepping aside after arriving from the shelf */
+main { transition: margin-left 0.25s ease; }
+@media (min-width: 1000px) {
+  body.lib-open:not(.intro) main { margin-left: var(--lib-w); }
+  body.lib-open .editor { left: calc(50% + var(--lib-w) / 2); width: min(760px, calc(100% - var(--lib-w) - 24px)); }
+}
+@media (max-width: 999px) {
+  body.lib-open .library { box-shadow: 8px 0 28px rgba(0, 0, 0, 0.18); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .library, body.lib-open .library, main { transition: none; }
+}
+.lib-head { display: flex; align-items: center; gap: 6px; padding: 12px 12px 8px 14px; }
+.lib-head h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.songs {
+  list-style: none;
+  margin: 0;
+  padding: 4px 12px 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  text-align: left;
+  white-space: normal;
+  border-radius: 10px;
+}
+.card .thumb {
+  display: block;
+  height: 112px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+}
+.card .thumb img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+.card .meta { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px 9px; min-width: 0; }
+.card .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .composer, .card .facts { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.card.pending { border: 1px dashed var(--line); background: var(--panel); cursor: default; }
+.card.pending .thumb { display: grid; place-items: center; font-size: 28px; color: var(--muted); background: var(--bg); }
+
+/* ---- the shelf: the landing page, each score a small deck of its pages ------------------- */
+.brand { display: none; font-size: 17px; letter-spacing: -0.01em; }
+.shelf { display: none; }
+body.landing .brand { display: inline; }
+body.landing .shelf { display: block; }
+body.landing #score, body.landing #libToggle, body.landing .now,
+body.landing .transport, body.landing .practice { display: none; }
+
+.shelf { max-width: 1400px; margin: 0 auto; padding: 36px clamp(16px, 5vw, 64px) 72px; }
+.shelf-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin-bottom: 36px; }
+.shelf-head h1 { margin: 0; font-size: 28px; font-weight: 650; letter-spacing: -0.02em; }
+.shelf .empty { margin-top: 12vh; }
+.decks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 48px 56px;
+}
+.decks li { position: relative; }
+.decks li:hover, .decks li:focus-within { z-index: 2; } /* a fanned deck lies over its neighbour */
+.deck {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  text-align: left;
+  white-space: normal;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+}
+.deck:focus-visible { outline: none; }
+.deck:focus-visible .front { outline: 3px solid var(--accent); outline-offset: 3px; }
+.sheets { position: relative; display: block; aspect-ratio: 840 / 1188; }
+.sheet {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--paper);
+  border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14), 0 6px 18px rgba(0, 0, 0, 0.1);
+  transform-origin: 50% 92%;
+  transition: transform 0.5s cubic-bezier(0.2, 0.9, 0.25, 1.12), box-shadow 0.3s ease;
+}
+.sheet img { display: block; width: 100%; height: auto; }
+.sheet img, .card .thumb img { opacity: 0; transition: opacity 0.35s ease; }
+.sheet img.ready, .card .thumb img.ready { opacity: 1; }
+.sheet.b1 { transform: translate(4px, 3px) rotate(1.6deg); }
+.sheet.b2 { transform: translate(8px, 6px) rotate(3.2deg); }
+.deck:hover .front, .deck:focus-visible .front {
+  transform: translateY(-10px) rotate(-2.5deg);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.12), 0 18px 36px rgba(0, 0, 0, 0.2);
+}
+.deck:hover .b1, .deck:focus-visible .b1 { transform: translate(22px, -6px) rotate(7deg); transition-delay: 0.03s; }
+.deck:hover .b2, .deck:focus-visible .b2 { transform: translate(42px, -1px) rotate(13deg); transition-delay: 0.06s; }
+.caption { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.caption .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.caption .composer, .caption .facts { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deck.pending { cursor: default; }
+.deck.pending .sheet { display: grid; place-items: center; background: var(--panel); border: 1px dashed var(--line);
+                       box-shadow: none; font-size: 40px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .sheet { transition: none; } }
+
+/* Moving between the shelf and a score: the View Transitions API morphs elements that share a
+   view-transition-name (set from app.js just for the move) from their old place to their new one. */
+::view-transition-group(*) { animation-duration: 0.6s; animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1); }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 0.4s; }
+::view-transition-group(*.clip) { overflow: clip; } /* a whole page shrinking into a thumbnail's crop */
+/* The big page is only captured where it was on screen: let its snapshot go early so the blank
+   rest never shows while it shrinks into a deck. */
+::view-transition-old(score-page), ::view-transition-old(score-page-2), ::view-transition-old(score-page-3) { animation-duration: 0.25s; }
+::view-transition-group(library) { z-index: 1; } /* over the score pages... */
+::view-transition-group(*.fly) { z-index: 2; } /* ...and under the cards flying into it */
+::view-transition-new(library) { animation: lib-in 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+::view-transition-old(library) { animation: lib-out 0.4s cubic-bezier(0.4, 0, 0.6, 1) both; }
+@keyframes lib-in { from { transform: translateX(-100%); } }
+@keyframes lib-out { to { transform: translateX(-100%); } }
+.vt .library, .vt main { transition: none !important; } /* layout jumps to its end state; the morph animates it */

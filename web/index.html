@@ -4,14 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>pianoscribe</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎹</text></svg>">
   <link rel="stylesheet" href="style.css">
+  <style id="vtStagger"></style>
 </head>
 <body>
   <header class="bar">
     <div class="group song">
-      <select id="song" aria-label="Song"></select>
-      <button id="addSong" title="Add a song from YouTube or a file">＋ Add</button>
-      <span id="credits" class="muted"></span>
+      <strong class="brand">🎹 pianoscribe</strong>
+      <button id="libToggle" aria-controls="library" aria-expanded="false" aria-label="Library" title="Library (B)">☰</button>
+      <span class="now"><strong id="songTitle"></strong> <span id="credits" class="muted"></span></span>
       <span id="jobStatus" class="muted job"></span>
     </div>
     <div class="group transport">
@@ -45,6 +47,27 @@
       <a id="pdf" target="_blank" rel="noopener">PDF</a>
     </div>
   </header>
+
+  <nav id="library" class="library" aria-label="Library">
+    <div class="lib-head">
+      <h2>Library</h2>
+      <span class="spacer"></span>
+      <button id="toShelf" title="All your scores, side by side">▦ All</button>
+      <button id="addSong" title="Add a song from YouTube or a file">＋ Add</button>
+    </div>
+    <ul id="songList" class="songs"></ul>
+  </nav>
+
+  <section id="shelf" class="shelf" aria-label="Your scores">
+    <div class="shelf-head">
+      <h1>Your scores</h1>
+      <span id="shelfCount" class="muted"></span>
+      <span class="spacer"></span>
+      <button id="shelfAdd" class="primary" title="Add a song from YouTube or a file">＋ Add a song</button>
+    </div>
+    <p id="shelfEmpty" class="muted empty" hidden>No scores yet: add one from a YouTube search, a link, or a file on this computer.</p>
+    <ul id="decks" class="decks"></ul>
+  </section>
 
   <main id="score" aria-label="Score"><p class="muted empty">Loading…</p></main>
   <audio id="audio" preload="auto"></audio>
