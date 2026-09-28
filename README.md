@@ -36,6 +36,11 @@ opens it in a practice viewer that follows the original recording note by note.
 
 ## The practice viewer
 
+<p align="center">
+  <img src="docs/images/shelf.gif" width="900" alt="A shelf of scores: hovering a score fans out its pages; clicking one grows it to full screen while the others fly into the library sidebar">
+  <br><em>Your scores on a shelf: hover to fan out the pages, click to open one while the rest fly into the library.</em>
+</p>
+
 | Follows the recording | Correct anything | Add songs |
 |---|---|---|
 | ![Pages view with the playing notes highlighted](docs/images/viewer.png) | ![Editing a note: pitch, hand, length, timing](docs/images/editing.png) | ![Adding a song from a YouTube search](docs/images/add-song.png) |
@@ -126,5 +131,6 @@ any step can be re-run alone. An Apple-silicon GPU (MPS) or CUDA is used when av
 ## A note on copyright
 
 pianoscribe is a personal practice tool. Only transcribe recordings you have the right to use,
-and don't redistribute transcriptions of copyrighted music. The images in this README use Erik
-Satie's *Gymnopédie No. 1* (public domain).
+and don't redistribute transcriptions of copyrighted music. The images in this README only show
+public-domain music: Satie's *Gymnopédie No. 1*, Bach's *Prelude in C major*, Beethoven's
+*Für Elise* and Chopin's *Prelude in E minor*.

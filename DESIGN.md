@@ -390,6 +390,33 @@ README.
   merged) matches the music21 version on 5 of 6 staves; the rest differ by 2–4 notes where a tie
   crossed from a one-voice into a two-voice bar (now both bars switch together), with every tie
   start matched by its stop.
+- **Spelling notes outside the key by their role**, not by the signature's lean (which wrote
+  Für Elise's D♯–E as E♭–E and A minor's leading tone as A♭, even G♭ for the F♯ of V/V in
+  C). Semitones above the tonic pick a scale degree and an alteration: major keys raise 1 and 4
+  and borrow ♭3 ♭6 ♭7 (C♯ E♭ F♯ A♭ B♭ in C); minor keys raise 3, 4, 6, 7 and lower only the
+  Neapolitan 2nd (C♯ D♯ F♯ G♯ B♭ in A minor; E♯ as F♯ minor's leading tone; F♭ as E♭
+  minor's Neapolitan). Never a double sharp or flat: then the plainer name. The viewer's
+  note labels use the same rule. Rebuilding everything changed only Für Elise (171 notes) and
+  Bach (20); the pop songs were already spelled the same.
+
+## Public-domain pieces (the README's shelf)
+
+Three clean digital-piano renditions (Rousseau's channel) next to the Gymnopédie, so every image
+in the README shows public-domain music. Each found a limit:
+
+- **Bach, Prelude in C (BWV 846):** the tempo was right (a beat is exactly four 16ths) but the
+  bars started a beat late; one saved *barlines ▶* setting fixed it. Inside the bars the even
+  16ths still come out as dotted figures: the player's rubato drifts against a tempo-continuous
+  grid (beat/16th ratio 4.24 → 3.73 over the piece) and the held notes of each broken chord get
+  absorbed into longer values.
+- **Beethoven, Für Elise:** A minor and 3 beats per bar, but the beat is the eighth (3/8), so it's
+  written in 3/4 with doubled values. Needs meters on an eighth-note beat.
+- **Chopin, Prelude in E minor:** its free Largo fooled the tracker into a 3:4 tempo error (it
+  hears 3 beats where there are 4), which ½×/2× can't fix. Rubato-heavy slow pieces want either
+  a tempo hint from the user or a tracker that follows expressive timing.
+
+The README images are made from a second server that only sees these four: `pianoscribe serve`
+run from a folder whose `library/` links just them (`scripts/readme_images.py --url ...`).
 - Intro/outro cards have other layouts. Frames where the red hit line is missing are skipped,
   and only the span the video covers is scored.
 
