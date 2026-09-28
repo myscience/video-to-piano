@@ -23,7 +23,7 @@ from .library import LIBRARY, Song
 
 Progress = Callable[[str, str], None]  # (step, message)
 PLAYABLE = {".m4a", ".mp3", ".wav", ".ogg", ".opus", ".webm", ".mp4"}
-# music21 and Verovio keep global state: one score build or render at a time (the viewer's
+# Verovio keeps global state: one score build or render at a time (the viewer's
 # server runs requests in threads, and a background "add song" job may be building too).
 _BUILD = threading.RLock()
 

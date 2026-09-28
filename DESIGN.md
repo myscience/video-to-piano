@@ -49,7 +49,7 @@ src/pianoscribe/
   sources/               # yt-dlp download, ffmpeg decode -> mono 44.1 kHz audio.wav
   transcribe/            # NoteEvent/Transcription + pluggable backends, ensemble merge
   rhythm/                # beats and bars, quantization
-  notation/              # hands, score building (music21 -> MusicXML)
+  notation/              # hands, voices, clefs, edits, our own MusicXML writer
   render/                # MusicXML -> PDF (LilyPond)
   eval/                  # Synthesia-video answer key, mir_eval metrics, piano-roll plots
   server/                # planned: viewer backend

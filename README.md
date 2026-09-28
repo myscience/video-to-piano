@@ -116,7 +116,7 @@ any step can be re-run alone. An Apple-silicon GPU (MPS) or CUDA is used when av
 
 [Transkun](https://github.com/Yujia-Yan/Transkun) ·
 [ByteDance piano transcription](https://github.com/bytedance/piano_transcription) ·
-[Beat This!](https://github.com/CPJKU/beat_this) · [music21](https://web.mit.edu/music21/) ·
+[Beat This!](https://github.com/CPJKU/beat_this) ·
 [LilyPond](https://lilypond.org) · [Verovio](https://www.verovio.org) ·
 [yt-dlp](https://github.com/yt-dlp/yt-dlp) · [mir_eval](https://github.com/mir-evaluation/mir_eval) ·
 [FastAPI](https://fastapi.tiangolo.com)

@@ -46,12 +46,6 @@ class Key:
         letter, alter, _ = spell(60 + self.tonic, self.sharps)
         return f"{LETTERS[letter]}{'♯' * alter if alter > 0 else '♭' * -alter} {self.mode}"
 
-    @property
-    def music21_name(self) -> str:
-        """e.g. 'G- major' (music21's spelling, kept for display compatibility)."""
-        letter, alter, _ = spell(60 + self.tonic, self.sharps)
-        return f"{LETTERS[letter]}{'#' * alter if alter > 0 else '-' * -alter} {self.mode}"
-
 
 def estimate_key(pitches: list[int], weights: list[float]) -> Key:
     """Krumhansl-Schmuckler: correlate the duration-weighted pitch-class histogram with every
