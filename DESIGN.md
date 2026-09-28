@@ -353,6 +353,16 @@ README.
 - Neither music21 nor Verovio is thread-safe: builds and previews take one lock.
 - Spelling every note rebuilt a music21 scale each time (~8 ms × 4,800 notes): cached per key,
   a full build went from 11–17 s to 6–8 s and a preview from 14 s to ~3 s.
+- **Our own MusicXML writer** (`notation/musicxml.py`) replaced music21 for building bars and
+  exporting (~3.5 s of the remaining ~4.3 s preview): notatable values (largest first), ties,
+  beams within beats, printed accidentals per staff and bar, per-staff voices, hidden rests as
+  `<forward>`, clef changes before tied notes, key estimation (the same Krumhansl-Kessler profiles
+  in numpy: same keys on all three songs). Notes carry ids `n<pitch>t<tick>v<voice>` that Verovio
+  keeps, so the viewer gets pitches without 2,500 lookups. **Preview: 4.3 s → 0.56 s** (exile),
+  0.38 s, 0.13 s. Checked by parsing the output back: every note (pitch, start, length, ties
+  merged) matches the music21 version on 5 of 6 staves; the rest differ by 2–4 notes where a tie
+  crossed from a one-voice into a two-voice bar (now both bars switch together), with every tie
+  start matched by its stop.
 - Intro/outro cards have other layouts. Frames where the red hit line is missing are skipped,
   and only the span the video covers is scored.
 

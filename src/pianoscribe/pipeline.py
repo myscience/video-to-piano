@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import re
 import shutil
-import tempfile
 import threading
 import time
 import unicodedata
@@ -132,21 +131,19 @@ def _score(song: Song, notes_name: str | None, pending: list[dict], voices: bool
     t = Transcription([n for n in t.notes if start <= n.onset <= end], t.pedal)
     q, forced, skipped = E.apply(quantize(t, grid), E.load(song.edits) + list(pending))
     guess_title, guess_composer = song.credits()
-    score = build_score(q, decode_hands(q, forced=forced), grid.beats_per_bar, grid.tempo,
-                        title or guess_title, composer or guess_composer,
-                        pedal=quantize_pedal(t, grid), voices=voices)
-    k = score.recurse().getElementsByClass("Key").first()
-    info = Built(k.name if k else "?", len(q), getattr(score, "voiced_bars", {}), (start, end), skipped_edits=skipped)
-    return score, grid, info
+    eng = build_score(q, decode_hands(q, forced=forced), grid.beats_per_bar, grid.tempo,
+                      title or guess_title, composer or guess_composer,
+                      pedal=quantize_pedal(t, grid), voices=voices)
+    info = Built(eng.key.name, len(q), eng.voiced, (start, end), skipped_edits=skipped)
+    return eng, grid, info
 
 
-def _sync(song: Song, grid, score, pages: int) -> dict:
+def _sync(song: Song, grid, eng, pages: int) -> dict:
     """How the viewer maps score positions (quarters from bar 1) to recording time."""
     title, composer = song.credits()
-    k = score.recurse().getElementsByClass("KeySignature").first()
-    return {"key_sharps": k.sharps if k else 0, "beats": [round(float(b), 4) for b in grid.beats],
+    return {"key_sharps": eng.key.sharps, "key": eng.key.name, "beats": [round(float(b), 4) for b in grid.beats],
             "first_downbeat": int(np.searchsorted(grid.beats, grid.downbeats[0])),
-            "shift_beats": score.shift_beats, "beats_per_bar": grid.beats_per_bar, "bpm": round(grid.tempo, 2),
+            "shift_beats": eng.shift_beats, "beats_per_bar": grid.beats_per_bar, "bpm": round(grid.tempo, 2),
             "pages": pages, "title": title, "composer": composer}
 
 
@@ -159,7 +156,6 @@ def build(song: Song, notes_name: str | None = None, pdf: bool = True, png: bool
 
 
 def _build(song, notes_name, pdf, png, view, voices, title, composer, progress) -> Built:
-    from .notation.score import write_musicxml
     from .render.lilypond import musicxml_to_pdf
     from .render.verovio import render_view
 
@@ -167,30 +163,27 @@ def _build(song, notes_name, pdf, png, view, voices, title, composer, progress) 
     if title or composer:  # explicit credits are remembered for every later build and the library
         song.update_meta(song_title=title or song.credits()[0], composer=composer or song.credits()[1])
     progress("score", "writing the score")
-    score, grid, info = _score(song, notes_name, [], voices, title, composer)
-    write_musicxml(score, song.score)
+    eng, grid, info = _score(song, notes_name, [], voices, title, composer)
+    song.score.write_text(eng.xml)
     if pdf:
         progress("score", "engraving the PDF")
         musicxml_to_pdf(song.score, song.pdf, png=png)
     if view:
         progress("score", "preparing the viewer")
         info.pages = render_view(song.score, song.view_dir)
-        (song.view_dir / "sync.json").write_text(json.dumps(_sync(song, grid, score, info.pages)))
+        (song.view_dir / "sync.json").write_text(json.dumps(_sync(song, grid, eng, info.pages)))
     info.seconds = time.perf_counter() - t0
     return info
 
 
 def preview(song: Song, pending: list[dict], line: bool = False) -> dict:
     """The score with saved + pending edits, rendered for the viewer only (nothing is written)."""
-    from .notation.score import write_musicxml
     from .render.verovio import render
 
-    with _BUILD, tempfile.TemporaryDirectory() as tmp:
-        score, grid, info = _score(song, None, pending, True, None, None)
-        xml = Path(tmp) / "preview.musicxml"
-        write_musicxml(score, xml)
-        view = render(xml.read_text(), line=line)
-    view["sync"] = _sync(song, grid, score, len(view["pages"]))
+    with _BUILD:
+        eng, grid, info = _score(song, None, pending, True, None, None)
+        view = render(eng.xml, line=line)
+    view["sync"] = _sync(song, grid, eng, len(view["pages"]))
     view["skipped"] = info.skipped_edits
     return view
 

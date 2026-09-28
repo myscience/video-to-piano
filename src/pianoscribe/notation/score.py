@@ -1,65 +1,28 @@
-"""Quantized notes with hands -> a two-staff piano score (music21) -> MusicXML.
+"""Quantized notes with hands -> a two-staff piano score -> MusicXML.
 
-First version, deliberately simple: one voice per hand. Notes starting together form a chord,
-each chord lasts until that hand's next chord unless a clear silence follows (`written_end`).
-Held notes under a moving line are cut at the next chord (voices will fix that).
+Each hand is written as one voice of chords, or, where it is worth it, two voices by musical role
+(melody over accompaniment, bass under the rest). Gaps become rests only when they are real
+silences (`written_end`). The bars are written straight to MusicXML (`musicxml.py`).
 """
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
-from dataclasses import replace
-from fractions import Fraction
-from functools import lru_cache
+from dataclasses import dataclass, replace
 from itertools import groupby
-from pathlib import Path
-
-from music21 import chord, clef, key, layout, meter, metadata, note, pitch, stream, tempo
 
 from ..rhythm.quantize import TICKS_PER_BEAT, QuantizedNote
-from .hands import MAX_SPAN
 from ..transcribe.base import Hand, NoteEvent, Transcription
+from .hands import MAX_SPAN
+from .musicxml import Bar, Key, Staff, Voice, diatonic, estimate_key, pieces_in_bars, write
 
 # Gaps up to an eighth are always absorbed: on 'exile' the half-the-chord rule alone left 29
 # sixteenth rests (a 16th note, then a 16th gap); with this floor none remain.
 ABSORB_GAP = TICKS_PER_BEAT // 2
 
 
-def estimate_key(pitches: list[int], weights: list[float]) -> key.Key:
-    """Krumhansl-Schmuckler on weighted pitches; 6+ accidentals -> the flat-side enharmonic key."""
-    s = stream.Stream()
-    for p, w in zip(pitches, weights):
-        s.append(note.Note(p, quarterLength=max(w, 0.01)))
-    k = s.analyze("key")
-    if abs(k.sharps) > 6 or k.sharps == 6:  # prefer Gb over F#, Db over C#, ...
-        k = key.Key(k.tonic.getEnharmonic().name, k.mode)
-    return k
-
-
-@lru_cache(maxsize=32)
-def _scale_names(tonic: str, mode: str) -> dict[int, str]:
-    """Pitch class -> the key's name for it. Cached: building a music21 scale costs ~8 ms, and
-    spelling every note that way made a full build take ~11 s longer."""
-    return {p.pitchClass: p.name for p in key.Key(tonic, mode).getScale(mode).getPitches()}
-
-
-def spell(midi: int, k: key.Key) -> pitch.Pitch:
-    """The key's own name for scale notes (Bb, not A#, in Gb major); chromatic notes lean the
-    way the key signature does (flats in flat keys, sharps in sharp keys)."""
-    scale = _scale_names(k.tonic.name, k.mode)
-    p = pitch.Pitch(midi=midi)
-    if midi % 12 in scale:
-        p = pitch.Pitch(scale[midi % 12])
-    elif p.accidental is not None and (p.accidental.alter > 0) != (k.sharps > 0):
-        p = p.getEnharmonic()
-    p.octave = 4
-    p.octave += (midi - round(p.ps)) // 12  # keep the sounding pitch (Cb4 sounds as B3)
-    return p
-
-
-def in_key(pitches: list[int], weights: list[float], k: key.Key) -> float:
+def in_key(pitches: list[int], weights: list[float], k: Key) -> float:
     """Weighted share of the notes that belong to the key's scale."""
-    scale = {p.pitchClass for p in k.getScale(k.mode).getPitches()}
+    scale = k.scale
     return sum(w for p, w in zip(pitches, weights) if p % 12 in scale) / max(sum(weights), 1e-9)
 
 
@@ -165,7 +128,8 @@ def split_roles(notes: list[QuantizedNote], hand: Hand) -> tuple[list[QuantizedN
     return upper, lower
 
 
-def voiced_bars(upper: list, lower: list, bar: int, n_bars: int, seed: list[bool] | None = None) -> list[bool]:
+def voiced_bars(upper: list, lower: list, bar: int, n_bars: int, seed: list[bool] | None = None,
+                also: list = ()) -> list[bool]:
     """Bars that need two voices: where the lower voice doesn't move in step with the upper one.
 
     Otherwise (block chords, or one role silent for the bar) plain chords read better. A note
@@ -181,7 +145,8 @@ def voiced_bars(upper: list, lower: list, bar: int, n_bars: int, seed: list[bool
     up, low = rhythm(upper), rhythm(lower)
     need = seed if seed is not None else [bool(low[i]) and bool(up[i]) and not low[i] <= up[i]
                                           for i in range(n_bars)]
-    spans = [(s // bar, (s + length - 1) // bar) for s, length, p in upper + lower if p]
+    # `also`: the one-voice version's events, whose ties must not cross a mode change either.
+    spans = [(s // bar, (s + length - 1) // bar) for s, length, p in [*upper, *lower, *also] if p]
     changed = True
     while changed:
         changed = False
@@ -190,34 +155,6 @@ def voiced_bars(upper: list, lower: list, bar: int, n_bars: int, seed: list[bool
                 need[a : b + 1] = [True] * (b - a + 1)
                 changed = True
     return need
-
-
-def _element(pitches: list[int], length: int, k: key.Key, stem: str | None = None) -> note.GeneralNote:
-    ql = Fraction(length, TICKS_PER_BEAT)
-    if not pitches:
-        return note.Rest(quarterLength=ql)
-    el = (note.Note(spell(pitches[0], k), quarterLength=ql) if len(pitches) == 1
-          else chord.Chord([spell(p, k) for p in pitches], quarterLength=ql))
-    if stem:
-        el.stemDirection = stem
-    return el
-
-
-def _measures(events: list, k: key.Key, ts: meter.TimeSignature, total: int, stem: str | None = None,
-              hide_rests: bool = False) -> list[stream.Measure]:
-    """Events (score ticks) -> measures with rests filled in and ties across barlines.
-    hide_rests: rests keep their time but aren't printed (a secondary voice dropping out)."""
-    s = stream.Stream()
-    s.insert(0, meter.TimeSignature(ts.ratioString))
-    for start, length, pitches in events:
-        s.insert(Fraction(start, TICKS_PER_BEAT), _element(pitches, length, k, stem))
-    s.makeRests(refStreamOrTimeRange=[0, Fraction(total, TICKS_PER_BEAT)], fillGaps=True, inPlace=True)
-    measured = s.makeMeasures()
-    measured.makeTies(inPlace=True)
-    if hide_rests:
-        for r in measured.recurse().getElementsByClass(note.Rest):
-            r.style.hideObjectOnPrint = True
-    return list(measured.getElementsByClass(stream.Measure))
 
 
 def cut_out_of_reach(events: list, hand: list[QuantizedNote], reach: int = MAX_SPAN) -> list:
@@ -249,103 +186,52 @@ def sustain_gain(events: list, onsets: list[int], bar: int, n_bars: int) -> list
     return gain
 
 
-def build_part(notes: list[QuantizedNote], hand: Hand, k: key.Key, ts: meter.TimeSignature, total: int,
-               pedal: list[tuple[int, int]], voices: bool = True,
-               min_gain: float = 1.0, per_rest: float = 0.5) -> tuple[stream.PartStaff, int]:
-    """One staff. Returns it with the number of bars that use two voices.
+# ---- building the staves -------------------------------------------------------------------
+
+def build_staff(notes: list[QuantizedNote], hand: Hand, bar: int, n_bars: int, pedal: list[tuple[int, int]],
+                voices: bool = True, min_gain: float = 1.0, per_rest: float = 0.5) -> tuple[list[Bar], int]:
+    """One hand's bars. Returns them with the number of bars that use two voices.
 
     A bar gets two voices only where they are worth it: the sustain they show (that one voice
     would cut) is at least `min_gain` beats and at least `per_rest` beats per visible rest they
     add. The secondary voice (right-hand accompaniment, left-hand notes above the bass) hides its
     rests; the melody and the bass keep theirs, which carry musical meaning.
     """
-    bar = round(ts.barDuration.quarterLength * TICKS_PER_BEAT)
-    n_bars = -(-total // bar)
-    merged = _measures(hand_events(notes, pedal), k, ts, total)
+    base = 1 if hand == "R" else 5  # MusicXML voices: staff 1 -> 1, 2; staff 2 -> 5, 6
+    one_voice = hand_events(notes, pedal)
+    merged = pieces_in_bars(one_voice, bar, n_bars)
     need = [False] * n_bars
     if voices:
         upper_notes, lower_notes = split_roles(notes, hand)
         upper = cut_out_of_reach(hand_events(upper_notes, pedal, TICKS_PER_BEAT), notes)
         lower = cut_out_of_reach(hand_events(lower_notes, pedal, TICKS_PER_BEAT), notes)
-        ups = _measures(upper, k, ts, total, "up", hide_rests=hand == "L")
-        lows = _measures(lower, k, ts, total, "down", hide_rests=hand == "R")
+        ups = pieces_in_bars(upper, bar, n_bars, hidden_rests=hand == "L")
+        lows = pieces_in_bars(lower, bar, n_bars, hidden_rests=hand == "R")
         onsets = sorted({n.start for n in notes})
         gain = [a + b for a, b in zip(sustain_gain(upper, onsets, bar, n_bars), sustain_gain(lower, onsets, bar, n_bars))]
         primary = lows if hand == "L" else ups
-        rests = [len(primary[i].getElementsByClass(note.Rest)) for i in range(n_bars)]
+        rests = [sum(1 for p in primary[i] if not p.pitches and not p.hidden) for i in range(n_bars)]
         worth = [gain[i] >= min_gain * TICKS_PER_BEAT and gain[i] >= per_rest * TICKS_PER_BEAT * rests[i]
                  for i in range(n_bars)]
         diverge = voiced_bars(upper, lower, bar, n_bars)
-        need = voiced_bars(upper, lower, bar, n_bars, [d and w for d, w in zip(diverge, worth)])
-
-    part = stream.PartStaff()
-    for i in range(n_bars):
-        if need[i]:
-            m = stream.Measure(number=i + 1)
-            for vid, src in (("1", ups[i]), ("2", lows[i])):
-                v = stream.Voice(id=vid)
-                for el in src.notesAndRests:
-                    v.insert(el.offset, el)
-                m.insert(0, v)
-        else:
-            m = merged[i]
-            m.number = i + 1
-        part.append(m)
-    first = part.getElementsByClass(stream.Measure).first()
-    for old in list(first.getElementsByClass((clef.Clef, key.KeySignature, meter.TimeSignature))):
-        first.remove(old)
-    first.insert(0, clef.TrebleClef() if hand == "R" else clef.BassClef())
-    first.insert(0, key.Key(k.tonic.name, k.mode))
-    first.insert(0, meter.TimeSignature(ts.ratioString))
-    # Print only the accidentals the key signature doesn't already imply (bars are assembled by
-    # hand, so music21's usual makeNotation pass doesn't run: every G-flat got a flat).
-    part.makeAccidentals(inPlace=True)
-    return part, sum(need)
+        need = voiced_bars(upper, lower, bar, n_bars, [d and w for d, w in zip(diverge, worth)], one_voice)
+    bars = [Bar([Voice(base, ups[i], "up"), Voice(base + 1, lows[i], "down")]) if need[i]
+            else Bar([Voice(base, merged[i])]) for i in range(n_bars)]
+    return bars, sum(need)
 
 
-def build_score(notes: list[QuantizedNote], hands: list[Hand], beats_per_bar: int, bpm: float,
-                title: str = "", composer: str = "", pedal: list[tuple[int, int]] = (),
-                voices: bool = True) -> stream.Score:
-    """pedal: sustain-pedal (down, up) intervals in ticks, on the same grid as the notes.
-    voices: split each hand into melody/accompaniment (right) or bass/upper (left) where they
-    move independently; otherwise one voice of chords per hand."""
-    k = estimate_key([n.pitch for n in notes], [n.duration / TICKS_PER_BEAT for n in notes])
-    bar = beats_per_bar * TICKS_PER_BEAT
-    shift = -(min(n.start for n in notes) // bar) * bar  # first note lands in bar 1 (drops empty bars)
-    notes = [replace(n, start=n.start + shift, end=n.end + shift) for n in notes]
-    pedal = [(a + shift, b + shift) for a, b in pedal]
-    total = -(-max(n.end for n in notes) // bar) * bar
-    ts = meter.TimeSignature(f"{beats_per_bar}/4")
-
-    score = stream.Score()
-    # Only the movement title: music21 would also copy `title` into it (shown twice as a subtitle).
-    score.metadata = metadata.Metadata(movementName=title, composer=composer)
-    staves = []
-    for hand in ("R", "L"):
-        part, n_voiced = build_part([n for n, h in zip(notes, hands) if h == hand], hand, k, ts, total, pedal, voices)
-        part.id = f"{hand}H"
-        score.voiced_bars = getattr(score, "voiced_bars", {}) | {hand: n_voiced}
-        staves.append(part)
-        score.insert(0, part)
-    staves[0].getElementsByClass(stream.Measure).first().insert(0, tempo.MetronomeMark(number=round(bpm)))
-    score.shift_beats = shift / TICKS_PER_BEAT  # score position = beat position + shift_beats
-    score.insert(0, layout.StaffGroup(staves, symbol="brace", barTogether=True))
-    for part, home in zip(score.parts, ("treble", "bass")):
-        add_clef_changes(part, home)
-    return score
+STAFF_LINES = {"treble": (30, 38), "bass": (18, 26)}  # outer lines as staff positions: E4-F5, G2-A3
 
 
-STAFF_LINES = {"treble": ("E4", "F5"), "bass": ("G2", "A3")}  # outer lines of each staff
-
-
-def ledger_lines(p: pitch.Pitch, which: str) -> int:
+def ledger_lines(midi: int, which: str, sharps: int) -> int:
     """Ledger lines a note needs on a treble or bass staff: every 2 diatonic steps past an outer
     line adds one (C4 on treble: 1; D4 hangs below the staff: 0)."""
-    bottom, top = (pitch.Pitch(x).diatonicNoteNum for x in STAFF_LINES[which])
-    return max(bottom - p.diatonicNoteNum, p.diatonicNoteNum - top, 0) // 2
+    bottom, top = STAFF_LINES[which]
+    d = diatonic(midi, sharps)
+    return max(bottom - d, d - top, 0) // 2
 
 
-def choose_clefs(part: stream.Part, home: str, switch: float = 8.0, away: float = 1.0) -> list[str]:
+def choose_clefs(bars: list[Bar], home: str, sharps: int, switch: float = 8.0, away: float = 1.0) -> list[str]:
     """Clef for every bar of a staff, chosen globally (dynamic programming over the bars).
 
     Minimizes the ledger lines of all notes, plus `switch` per clef change (a change must save
@@ -354,11 +240,10 @@ def choose_clefs(part: stream.Part, home: str, switch: float = 8.0, away: float 
     bass clef instead of switching after one bar.
     """
     clefs = ("treble", "bass")
-    measures = list(part.getElementsByClass(stream.Measure))
     cost, back = {c: 0.0 for c in clefs}, []
-    for i, m in enumerate(measures):
-        pitches = [p for n in m.recurse().notes for p in n.pitches]
-        here = {c: sum(ledger_lines(p, c) for p in pitches) + (away if c != home else 0.0) for c in clefs}
+    for i, bar in enumerate(bars):
+        pitches = [p for v in bar.voices for piece in v.pieces for p in piece.pitches]
+        here = {c: sum(ledger_lines(p, c, sharps) for p in pitches) + (away if c != home else 0.0) for c in clefs}
         new, step = {}, {}
         for c in clefs:
             options = {c: cost[c]}
@@ -375,60 +260,52 @@ def choose_clefs(part: stream.Part, home: str, switch: float = 8.0, away: float 
     return chosen[::-1]
 
 
-def add_clef_changes(part: stream.Part, home: str) -> None:
-    """Write the clefs from `choose_clefs`: the first bar's, then only where the clef changes.
-
-    Never mid-sustain: when a note is tied across the barline where the clef changes (pop
-    syncopation does this in over half the bars), the change moves back to just before that
-    note starts, as engravers do, so the whole held note sits in one clef.
-    """
-    measures = list(part.getElementsByClass(stream.Measure))
-    previous = None
-    for i, (m, c) in enumerate(zip(measures, choose_clefs(part, home))):
-        if m.clef is not None:
-            m.remove(m.clef)
-        if c != previous:
-            new = clef.TrebleClef() if c == "treble" else clef.BassClef()
-            held = [n for n in measures[i - 1].recurse().notes
-                    if n.tie is not None and n.tie.type == "start"] if i > 0 else []
-            tied_in = any(n.tie is not None and n.tie.type in ("stop", "continue")
-                          for n in m.recurse().notes if n.offset == 0)
-            if tied_in and held:
-                measures[i - 1].insert(min(n.offset for n in held), new)
-            else:
-                m.insert(0, new)
-        previous = c
+def place_clefs(bars: list[Bar], clefs: list[str]) -> None:
+    """Mark each clef change on its bar. Never mid-sustain: when a note is tied across that barline
+    (pop syncopation does this in over half the bars), the change moves back to just before that
+    note starts, as engravers do, so the whole held note sits in one clef."""
+    for i in range(1, len(bars)):
+        if clefs[i] == clefs[i - 1]:
+            continue
+        before = bars[i - 1].voices[0].pieces
+        tied_in = bool(bars[i].voices[0].pieces) and bars[i].voices[0].pieces[0].tie_stop
+        if tied_in and before and before[-1].tie_start and bars[i - 1].clef is None:
+            k = len(before) - 1
+            while k > 0 and before[k].tie_stop:
+                k -= 1
+            bars[i - 1].clef, bars[i - 1].clef_at = clefs[i], before[k].start
+        else:
+            bars[i].clef, bars[i].clef_at = clefs[i], 0
 
 
-def write_musicxml(score: stream.Score, path: Path) -> None:
-    """Export, then fix two things music21 leaves ambiguous in the joined two-staff part.
+@dataclass
+class Engraving:
+    xml: str
+    key: Key
+    shift_beats: float  # score position (quarters from bar 1) = beat position + shift_beats
+    voiced: dict[str, int]  # two-voice bars per hand
 
-    Clefs: clef *changes* come out as a bare <clef>. MusicXML reads that as staff 1, yet
-    musicxml2ly may put it on the other staff (a right-hand change turned the left hand into
-    treble clef). A clef belongs to the staff of the next note after it.
-    Voices: both staves reuse voice numbers 1, 2, ..., and musicxml2ly groups notes by voice
-    number across the whole part, merging the hands (barlines vanished, staves drifted apart).
-    Each staff gets its own range, as notation programs do: staff 1 voices 1-4, staff 2 voices 5-8
-    (per bar, the n-th voice to appear in a staff becomes base + n).
-    """
-    score.write("musicxml", fp=path)
-    text = path.read_text()
-    header = text[: text.index("<score-partwise")]  # keep the XML declaration and DOCTYPE
-    root = ET.fromstring(text[len(header):])
-    for measure in root.iter("measure"):
-        children = list(measure)
-        for i, el in enumerate(children):
-            if el.tag != "attributes":
-                continue
-            staff = next((n.findtext("staff") for n in children[i + 1:] if n.tag == "note"), "1") or "1"
-            for c in el.findall("clef"):
-                c.attrib.setdefault("number", staff)
-        seen: dict[str, list[str]] = {}
-        for el in children:
-            v, st = el.find("voice"), el.findtext("staff") or "1"
-            if el.tag in ("note", "forward") and v is not None:
-                order = seen.setdefault(st, [])
-                if v.text not in order:
-                    order.append(v.text)
-                v.text = str((1 if st == "1" else 5) + order.index(v.text))
-    path.write_text(header + ET.tostring(root, encoding="unicode"))
+
+def build_score(notes: list[QuantizedNote], hands: list[Hand], beats_per_bar: int, bpm: float,
+                title: str = "", composer: str = "", pedal: list[tuple[int, int]] = (),
+                voices: bool = True, key: Key | None = None) -> Engraving:
+    """pedal: sustain-pedal (down, up) intervals in ticks, on the same grid as the notes.
+    voices: split each hand into melody/accompaniment (right) or bass/upper (left) where they
+    move independently; otherwise one voice of chords per hand.
+    key: the key to write in (default: estimated from the notes)."""
+    key = key or estimate_key([n.pitch for n in notes], [n.duration / TICKS_PER_BEAT for n in notes])
+    bar = beats_per_bar * TICKS_PER_BEAT
+    shift = -(min(n.start for n in notes) // bar) * bar  # first note lands in bar 1 (drops empty bars)
+    notes = [replace(n, start=n.start + shift, end=n.end + shift) for n in notes]
+    pedal = [(a + shift, b + shift) for a, b in pedal]
+    n_bars = -(-max(n.end for n in notes) // bar)
+
+    staves, voiced, first = [], {}, {}
+    for hand, number, home in (("R", 1, "treble"), ("L", 2, "bass")):
+        bars, voiced[hand] = build_staff([n for n, h in zip(notes, hands) if h == hand], hand, bar, n_bars, pedal, voices)
+        clefs = choose_clefs(bars, home, key.sharps)
+        place_clefs(bars, clefs)
+        first[number] = clefs[0]
+        staves.append(Staff(number, bars))
+    xml = write(staves, key, beats_per_bar, bpm, title, composer, first)
+    return Engraving(xml, key, shift / TICKS_PER_BEAT, voiced)

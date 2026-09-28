@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
 from importlib.resources import files
 from pathlib import Path
 
 import verovio
+
+OUR_ID = re.compile(r"^n(\d+)t-?\d+v\d+$")  # "n<pitch>t<tick>v<voice>" (notation/musicxml.py)
 
 
 def render(xml: str, line: bool = True, page_width: int = 2100, scale: int = 40) -> dict:
@@ -30,7 +33,9 @@ def render(xml: str, line: bool = True, page_width: int = 2100, scale: int = 40)
     spans: dict[str, list] = {}
     for event in tk.renderToTimemap({"includeRests": False}):
         for note_id in event.get("on", []):
-            spans[note_id] = [event["qstamp"], event["qstamp"], tk.getMIDIValuesForElement(note_id).get("pitch")]
+            named = OUR_ID.match(note_id)  # our writer's ids carry the pitch; others need a lookup
+            pitch = int(named.group(1)) if named else tk.getMIDIValuesForElement(note_id).get("pitch")
+            spans[note_id] = [event["qstamp"], event["qstamp"], pitch]
         for note_id in event.get("off", []):
             if note_id in spans:
                 spans[note_id][1] = event["qstamp"]
